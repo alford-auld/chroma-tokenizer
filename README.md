@@ -6,9 +6,9 @@ A Chrome extension that extracts text from web pages, calculates tokens using a 
 
 - **Text Extraction**: Automatically extracts all readable text from web pages
 - **Token Calculation**: Uses a local BPE tokenizer to count tokens in text segments
-- **Color Visualization**: Colorizes text based on token ID using a smooth log scale
-  - Blue: Low token ID (common tokens)
-  - Red: High token ID (rare tokens)
+- **Color Visualization**: Colorizes text based on token ID using a smooth grayscale gradient
+  - Light gray: Low token ID (common tokens)
+  - Black: High token ID (rare tokens)
 - **Individual Token Display**: Shows each token separately with color-coded complexity
 - **Real-time Toggle**: Enable/disable colorization with a simple toggle
 - **Non-intrusive**: Preserves original page functionality and styling

@@ -307,6 +307,12 @@ class TextTokenColorizer {
       if (text.length === 0) continue;
 
       try {
+        // Check if text contains only digits - skip tokenization
+        if (/^\d+$/.test(text)) {
+          console.log('Skipping digit-only text:', text);
+          continue;
+        }
+
         // Tokenize the text
         let tokenIds, tokenTexts;
         
@@ -442,10 +448,17 @@ class TextTokenColorizer {
   }
 
   createTokenSpan(token, tokenIndex, tokenId = null) {
+    // Check if token is only digits - keep them black
+    const isDigitOnly = /^\d+$/.test(token);
+    
     // Calculate color based on token ID log value instead of position
     let color, bgColor;
     
-    if (tokenId !== null && typeof tokenId === 'number') {
+    if (isDigitOnly) {
+      // Keep digits black (no colorization)
+      color = 'black';
+      bgColor = 'transparent';
+    } else if (tokenId !== null && typeof tokenId === 'number') {
       // Use token ID log value for coloring
       const logTokenId = Math.log10(tokenId + 1); // +1 to avoid log(0)
       color = this.getTokenColorFromLogId(logTokenId);
@@ -468,7 +481,9 @@ class TextTokenColorizer {
     tokenSpan.style.display = 'inline-block';
     
     // Add tooltip with token information
-    if (tokenId !== null && typeof tokenId === 'number') {
+    if (isDigitOnly) {
+      tokenSpan.title = `Digit: ${token}`;
+    } else if (tokenId !== null && typeof tokenId === 'number') {
       const logTokenId = Math.log10(tokenId + 1);
       tokenSpan.title = `Token ID: ${tokenId} (log: ${logTokenId.toFixed(2)})`;
     } else {
@@ -479,58 +494,59 @@ class TextTokenColorizer {
   }
 
   getTokenColor(tokenCount) {
-    // Use log scale for better distribution
+    // Use log scale for better distribution - continuous scale
     const logCount = Math.log10(Math.max(tokenCount, 1));
-    const maxLogCount = 4; // Adjust based on your needs
-    
-    // Normalize to 0-1 range
+    const maxLogCount = 4.0; // Adjust based on your needs
     const normalized = Math.min(logCount / maxLogCount, 1);
     
-    // Create a smooth color gradient from blue (low) to red (high)
-    const hue = (1 - normalized) * 240; // 240 is blue, 0 is red
-    const saturation = 80;
-    const lightness = 50;
+    // Create a smooth continuous grayscale gradient
+    const powerNormalized = Math.pow(normalized, 0.7); // Makes transition more gradual
+    const lightness = 100 - (powerNormalized * 100); // 100% (white) to 0% (black)
     
-    return `hsl(${hue}, ${saturation}%, ${lightness}%)`;
+    return `hsl(0, 0%, ${lightness}%)`;
   }
 
   getBackgroundColor(tokenCount) {
-    // Subtle background color based on token count
+    // Subtle background color based on token count - continuous scale
     const logCount = Math.log10(Math.max(tokenCount, 1));
-    const maxLogCount = 4;
+    const maxLogCount = 4.0;
     const normalized = Math.min(logCount / maxLogCount, 1);
     
-    const opacity = normalized * 0.1; // Very subtle background
-    const hue = (1 - normalized) * 240;
+    // Create a smooth continuous background gradient
+    const powerNormalized = Math.pow(normalized, 0.7); // Makes transition more gradual
+    const opacity = powerNormalized * 0.1; // Very subtle background
+    const lightness = 95 - (powerNormalized * 20); // Light gray to darker gray
     
-    return `hsla(${hue}, 20%, 90%, ${opacity})`;
+    return `hsla(0, 0%, ${lightness}%, ${opacity})`;
   }
 
 
   // New methods for token ID log-based coloring
   getTokenColorFromLogId(logTokenId) {
-    // Color based on token ID log value
-    // Typical range: 0.0 (token ID 0) to ~4.7 (token ID ~50,000)
-    const maxLogId = 5.0; // Adjust based on your tokenizer's vocabulary size
+    // Color based on token ID log value - continuous scale
+    // Map log values from 0 to ~5.3 to lightness from 100% to 0%
+    const maxLogId = 5.3; // Adjust based on your tokenizer's vocabulary size
     const normalized = Math.min(logTokenId / maxLogId, 1);
     
-    // Create a smooth color gradient from blue (low ID) to red (high ID)
-    const hue = (1 - normalized) * 240; // 240 is blue, 0 is red
-    const saturation = 80;
-    const lightness = 50;
+    // Create a smooth continuous grayscale gradient
+    // Use a power function to make the transition more gradual
+    const powerNormalized = Math.pow(normalized, 0.7); // Makes transition more gradual
+    const lightness = 100 - (powerNormalized * 100); // 100% (white) to 0% (black)
     
-    return `hsl(${hue}, ${saturation}%, ${lightness}%)`;
+    return `hsl(0, 0%, ${lightness}%)`;
   }
 
   getBackgroundColorFromLogId(logTokenId) {
-    // Background color based on token ID log value
-    const maxLogId = 5.0;
+    // Background color based on token ID log value - continuous scale
+    const maxLogId = 5.3;
     const normalized = Math.min(logTokenId / maxLogId, 1);
     
-    const opacity = normalized * 0.1; // Very subtle background
-    const hue = (1 - normalized) * 240;
+    // Create a smooth continuous background gradient
+    const powerNormalized = Math.pow(normalized, 0.7); // Makes transition more gradual
+    const opacity = powerNormalized * 0.1; // Very subtle background
+    const lightness = 95 - (powerNormalized * 20); // Light gray to darker gray
     
-    return `hsla(${hue}, 20%, 90%, ${opacity})`;
+    return `hsla(0, 0%, ${lightness}%, ${opacity})`;
   }
 
 }
