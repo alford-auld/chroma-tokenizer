@@ -30,18 +30,6 @@
   display: inline;
 }
 
-/* Style for the superscript token ID */
-.token-id-superscript {
-  font-size: 0.6em;
-  font-weight: 600;
-  margin-left: 1px;
-  opacity: 0.9;
-  vertical-align: super;
-  line-height: 0;
-  position: relative;
-  top: -0.2em;
-  cursor: help;
-}
 
 /* Add a subtle border to processed elements for debugging */
 .text-token-processed::before {

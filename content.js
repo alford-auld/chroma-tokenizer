@@ -8,8 +8,15 @@ class TextTokenColorizer {
   }
 
   async init() {
+    console.log('🚀 Initializing TextTokenColorizer...');
+    
     // Load the simple BPE tokenizer first
-    await this.loadSimpleBPE();
+    try {
+      await this.loadSimpleBPE();
+      console.log('✅ SimpleBPE loading completed');
+    } catch (error) {
+      console.error('❌ Failed to load SimpleBPE:', error);
+    }
     
     // Load the main tokenizer
     await this.loadTokenizer();
@@ -23,137 +30,90 @@ class TextTokenColorizer {
         sendResponse({ active: this.isActive });
       }
     });
+    
+    console.log('✅ TextTokenColorizer initialized');
   }
 
   async loadSimpleBPE() {
-    try {
-      const script = document.createElement('script');
-      script.src = chrome.runtime.getURL('simple_bpe.js');
-      script.onload = () => {
-        console.log('✅ SimpleBPE tokenizer loaded');
-      };
-      script.onerror = () => {
-        console.warn('⚠️  Failed to load SimpleBPE tokenizer');
-      };
-      document.head.appendChild(script);
-    } catch (error) {
-      console.warn('Failed to load SimpleBPE:', error);
-    }
+    return new Promise((resolve, reject) => {
+      try {
+        const script = document.createElement('script');
+        script.src = chrome.runtime.getURL('simple_bpe.js');
+        script.onload = () => {
+          console.log('✅ SimpleBPE tokenizer loaded');
+          resolve();
+        };
+        script.onerror = () => {
+          console.warn('⚠️  Failed to load SimpleBPE tokenizer');
+          reject(new Error('Failed to load SimpleBPE'));
+        };
+        document.head.appendChild(script);
+      } catch (error) {
+        console.warn('Failed to load SimpleBPE:', error);
+        reject(error);
+      }
+    });
   }
 
   async loadTokenizer() {
+    console.log('🔍 Loading tokenizer...');
+    
+    // Try to connect to local server first
     try {
-      // Try multiple CDN sources for the transformers library
-      const cdnSources = [
-        'https://cdn.jsdelivr.net/npm/@xenova/transformers@2.6.2/dist/transformers.min.js',
-        'https://unpkg.com/@xenova/transformers@2.6.2/dist/transformers.min.js',
-        'https://cdn.skypack.dev/@xenova/transformers@2.6.2'
-      ];
+      const response = await fetch('http://localhost:5001/health');
+      const health = await response.json();
       
-      let libraryLoaded = false;
-      
-      for (const cdnUrl of cdnSources) {
-        try {
-          console.log(`Attempting to load transformers from: ${cdnUrl}`);
-          
-          const script = document.createElement('script');
-          script.src = cdnUrl;
-          script.crossOrigin = 'anonymous';
-          
-          await new Promise((resolve, reject) => {
-            const timeout = setTimeout(() => {
-              reject(new Error('Timeout loading script'));
-            }, 10000); // 10 second timeout
-            
-            script.onload = () => {
-              clearTimeout(timeout);
-              resolve();
-            };
-            script.onerror = () => {
-              clearTimeout(timeout);
-              reject(new Error('Script failed to load'));
-            };
-            document.head.appendChild(script);
-          });
-          
-          // Check if the library loaded
-          if (window.transformers && window.transformers.AutoTokenizer) {
-            console.log(`✅ Transformers library loaded from: ${cdnUrl}`);
-            libraryLoaded = true;
-            break;
-          }
-        } catch (error) {
-          console.warn(`Failed to load from ${cdnUrl}:`, error.message);
-        }
+      if (health.tokenizer_loaded) {
+        console.log('✅ Local tokenizer server is available');
+        this.tokenizer = {
+          type: 'server',
+          model_name: health.model_name
+        };
+        console.log(`✅ Using server tokenizer: ${health.model_name}`);
+        return;
       }
-      
-      if (!libraryLoaded) {
-        throw new Error('All CDN sources failed to load transformers library');
-      }
-      
-      // Now try to load the tokenizer
-      const { AutoTokenizer } = window.transformers;
-      
-      // Try different model names for GPT-OSS-20B
-      const modelNames = [
-        'gpt2', // Start with GPT-2 as it's most reliable
-        'Xenova/gpt2',
-        'openai/gpt-oss-20b',
-        'openai/gpt-oss-20b-tokenizer'
-      ];
-      
-      let tokenizerLoaded = false;
-      for (const modelName of modelNames) {
-        try {
-          console.log(`Attempting to load tokenizer: ${modelName}`);
-          this.tokenizer = await AutoTokenizer.from_pretrained(modelName);
-          
-          // Verify the tokenizer
-          const vocabSize = this.tokenizer.vocab_size || this.tokenizer.get_vocab_size?.() || 'unknown';
-          console.log(`✅ Tokenizer loaded successfully: ${modelName}`);
-          console.log(`Vocabulary size: ${vocabSize}`);
-          
-          // Test the tokenizer
-          const testTokens = this.tokenizer.encode('Hello world');
-          console.log(`Test tokenization: [${testTokens.join(', ')}] (${testTokens.length} tokens)`);
-          
-          tokenizerLoaded = true;
-          break;
-        } catch (modelError) {
-          console.warn(`Failed to load ${modelName}:`, modelError.message);
-        }
-      }
-      
-      if (!tokenizerLoaded) {
-        throw new Error('All tokenizer models failed to load');
-      }
-      
     } catch (error) {
-      console.error('Failed to load tokenizer:', error);
+      console.log('⚠️  Local server not available:', error.message);
+    }
+    
+    // Fallback to SimpleBPE if server is not available
+    console.log('window.SimpleBPE available:', !!window.SimpleBPE);
+    
+    // Wait a bit for SimpleBPE to load, then check if it's available
+    await new Promise(resolve => setTimeout(resolve, 100));
+    
+    console.log('After wait - window.SimpleBPE available:', !!window.SimpleBPE);
+    
+    if (window.SimpleBPE) {
+      console.log('✅ SimpleBPE tokenizer is available');
+      this.tokenizer = new window.SimpleBPE();
+      console.log('✅ Using SimpleBPE tokenizer with proper token IDs');
+      
+      // Test the tokenizer
+      const testText = 'Hello world!';
+      const testTokens = this.tokenizer.encode(testText);
+      console.log('Test tokenization:', testText, '->', testTokens);
+    } else {
+      console.log('⚠️  SimpleBPE not available, using basic fallback');
       this.setupFallbackTokenizer();
     }
   }
 
   setupFallbackTokenizer() {
-    // Try to load the local BPE tokenizer first
-    if (window.SimpleBPE) {
-      console.log('Using local SimpleBPE tokenizer');
-      this.tokenizer = new window.SimpleBPE();
-    } else {
-      // Fallback to a more sophisticated tokenization approach
-      this.tokenizer = {
-        encode: (text) => {
-          // More sophisticated fallback tokenization
-          // Split on word boundaries and punctuation
-          const tokens = text.split(/(\s+|[.,!?;:()"'`-])/).filter(token => token.length > 0);
-          console.log('Using basic fallback tokenizer - token count:', tokens.length);
-          console.log('Fallback tokens:', tokens.slice(0, 10));
-          return tokens;
-        }
-      };
-    }
+    // Fallback to a more sophisticated tokenization approach
+    this.tokenizer = {
+      encode: (text) => {
+        // More sophisticated fallback tokenization
+        // Split on word boundaries and punctuation
+        const tokens = text.split(/(\s+|[.,!?;:()"'`-])/).filter(token => token.length > 0);
+        console.log('Using basic fallback tokenizer - token count:', tokens.length);
+        console.log('Fallback tokens:', tokens.slice(0, 10));
+        // Return as token IDs for consistency
+        return tokens.map((token, index) => index + 1);
+      }
+    };
     console.log('⚠️  Using FALLBACK tokenizer (not proper BPE)');
-    console.log('This means the transformers library failed to load');
+    console.log('This means SimpleBPE failed to load');
   }
 
   async toggle() {
@@ -166,13 +126,20 @@ class TextTokenColorizer {
 
   async activate() {
     if (!this.tokenizer) {
-      console.log('Tokenizer not ready yet, using fallback...');
-      this.setupFallbackTokenizer();
+      console.log('Tokenizer not ready yet, trying to load SimpleBPE...');
+      if (window.SimpleBPE) {
+        console.log('✅ SimpleBPE found, creating tokenizer');
+        this.tokenizer = new window.SimpleBPE();
+      } else {
+        console.log('⚠️  SimpleBPE not found, using fallback');
+        this.setupFallbackTokenizer();
+      }
     }
 
     this.isActive = true;
     console.log('Activating text token colorization...');
     console.log('Current tokenizer:', this.tokenizer ? 'Loaded' : 'Not loaded');
+    console.log('Tokenizer type:', this.tokenizer ? this.tokenizer.constructor.name : 'None');
     
     // Verify which tokenizer we're using
     this.verifyTokenizer();
@@ -341,29 +308,62 @@ class TextTokenColorizer {
 
       try {
         // Tokenize the text
-        const tokens = this.tokenizer.encode(text);
+        let tokenIds, tokenTexts;
+        
+        if (this.tokenizer.type === 'server') {
+          // Use server-based tokenization
+          const response = await fetch('http://localhost:5001/tokenize', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ text: text })
+          });
+          
+          if (!response.ok) {
+            throw new Error(`Server error: ${response.status}`);
+          }
+          
+          const result = await response.json();
+          tokenIds = result.token_ids;
+          tokenTexts = result.token_texts;
+          
+          console.log('Server tokenization result:', result);
+        } else {
+          // Use local tokenization
+          tokenIds = this.tokenizer.encode(text);
+          
+          // For fallback tokenizers, we need to reconstruct the text
+          if (this.tokenizer.constructor.name === 'SimpleBPE') {
+            // For SimpleBPE, use the stored tokens from the last encode call
+            tokenTexts = this.tokenizer.lastTokens || this.splitTextForSimpleBPE(text);
+          } else if (this.tokenizer.decode) {
+            // If tokenizer has decode method, use it
+            tokenTexts = tokenIds.map(id => this.tokenizer.decode([id]));
+          } else {
+            // Fallback: split text by spaces and punctuation
+            tokenTexts = text.split(/(\s+|[.,!?;:()"'`-])/).filter(t => t.length > 0);
+          }
+        }
         
         // Debug logging
         console.log('Original text:', text);
-        console.log('Tokens:', tokens);
-        console.log('Token count:', tokens.length);
+        console.log('Token IDs:', tokenIds);
+        console.log('Token count:', tokenIds.length);
+        console.log('Token texts:', tokenTexts);
+        console.log('Text match:', text === tokenTexts.join(''));
         
         // Create a wrapper element for all tokens
         const wrapper = document.createElement('span');
         wrapper.className = 'text-token-processed';
         
-        // For debugging, let's also show the reconstructed text
-        const reconstructedText = tokens.join('');
-        console.log('Reconstructed text:', reconstructedText);
-        console.log('Text match:', text === reconstructedText);
-        
         // Process each token individually
-        for (let i = 0; i < tokens.length; i++) {
-          const token = tokens[i];
-          const tokenId = typeof token === 'number' ? token : null;
+        for (let i = 0; i < tokenIds.length; i++) {
+          const tokenId = tokenIds[i];
+          const tokenText = tokenTexts[i] || `[token_${tokenId}]`;
           
           // Create the token span with actual token ID
-          const tokenSpan = this.createTokenSpan(token, i + 1, tokenId);
+          const tokenSpan = this.createTokenSpan(tokenText, i + 1, tokenId);
           wrapper.appendChild(tokenSpan);
         }
         
@@ -381,22 +381,79 @@ class TextTokenColorizer {
       }
     }
   }
+  
+  splitTextForSimpleBPE(text) {
+    // Replicate the SimpleBPE splitting logic to get token texts
+    let tokens = [text];
+    
+    const patterns = [
+      // Common word endings
+      /ing\b/g,
+      /ed\b/g,
+      /er\b/g,
+      /est\b/g,
+      /ly\b/g,
+      /tion\b/g,
+      /sion\b/g,
+      /ness\b/g,
+      /ment\b/g,
+      /able\b/g,
+      /ible\b/g,
+      // Common prefixes
+      /\bun/g,
+      /\bre/g,
+      /\bpre/g,
+      /\bdis/g,
+      /\bover/g,
+      /\bunder/g,
+      // Punctuation
+      /[.,!?;:]/g,
+      /['"`]/g,
+      // Spaces
+      /\s+/g
+    ];
+    
+    // Apply BPE-like splitting
+    for (const pattern of patterns) {
+      const newTokens = [];
+      for (const token of tokens) {
+        if (typeof token === 'string') {
+          const parts = token.split(pattern);
+          const matches = token.match(pattern) || [];
+          
+          let result = [];
+          for (let i = 0; i < parts.length; i++) {
+            if (parts[i]) result.push(parts[i]);
+            if (matches[i]) result.push(matches[i]);
+          }
+          newTokens.push(...result);
+        } else {
+          newTokens.push(token);
+        }
+      }
+      tokens = newTokens;
+    }
+    
+    // Filter out empty tokens and clean up
+    return tokens
+      .filter(token => token && token.length > 0)
+      .map(token => token.trim())
+      .filter(token => token.length > 0);
+  }
 
   createTokenSpan(token, tokenIndex, tokenId = null) {
     // Calculate color based on token ID log value instead of position
-    let color, bgColor, superscriptColor;
+    let color, bgColor;
     
     if (tokenId !== null && typeof tokenId === 'number') {
       // Use token ID log value for coloring
       const logTokenId = Math.log10(tokenId + 1); // +1 to avoid log(0)
       color = this.getTokenColorFromLogId(logTokenId);
       bgColor = this.getBackgroundColorFromLogId(logTokenId);
-      superscriptColor = this.getTokenCountColorFromLogId(logTokenId);
     } else {
       // Fallback to position-based coloring
       color = this.getTokenColor(tokenIndex);
       bgColor = this.getBackgroundColor(tokenIndex);
-      superscriptColor = this.getTokenCountColor(tokenIndex);
     }
     
     // Create the token span
@@ -410,28 +467,13 @@ class TextTokenColorizer {
     tokenSpan.style.borderRadius = '3px';
     tokenSpan.style.display = 'inline-block';
     
-    // Create the superscript with token ID (logarithmic)
-    const tokenIndexSpan = document.createElement('sup');
-    tokenIndexSpan.className = 'token-id-superscript';
-    
+    // Add tooltip with token information
     if (tokenId !== null && typeof tokenId === 'number') {
-      // Show the actual token ID with logarithmic scaling
-      const logTokenId = Math.log10(tokenId + 1); // +1 to avoid log(0)
-      tokenIndexSpan.textContent = logTokenId.toFixed(2);
-      tokenIndexSpan.title = `Token ID: ${tokenId}`; // Show full ID on hover
+      const logTokenId = Math.log10(tokenId + 1);
+      tokenSpan.title = `Token ID: ${tokenId} (log: ${logTokenId.toFixed(2)})`;
     } else {
-      // Fallback to position if no token ID available
-      tokenIndexSpan.textContent = tokenIndex;
-      tokenIndexSpan.title = `Position: ${tokenIndex}`;
+      tokenSpan.title = `Position: ${tokenIndex}`;
     }
-    
-    tokenIndexSpan.style.color = superscriptColor;
-    tokenIndexSpan.style.fontSize = '0.6em';
-    tokenIndexSpan.style.marginLeft = '1px';
-    tokenIndexSpan.style.opacity = '0.9';
-    
-    // Assemble the token span
-    tokenSpan.appendChild(tokenIndexSpan);
     
     return tokenSpan;
   }
@@ -464,19 +506,6 @@ class TextTokenColorizer {
     return `hsla(${hue}, 20%, 90%, ${opacity})`;
   }
 
-  getTokenCountColor(tokenCount) {
-    // Color for the superscript token count
-    const logCount = Math.log10(Math.max(tokenCount, 1));
-    const maxLogCount = 4;
-    const normalized = Math.min(logCount / maxLogCount, 1);
-    
-    // Use a more saturated color for the superscript
-    const hue = (1 - normalized) * 240;
-    const saturation = 90;
-    const lightness = 40;
-    
-    return `hsl(${hue}, ${saturation}%, ${lightness}%)`;
-  }
 
   // New methods for token ID log-based coloring
   getTokenColorFromLogId(logTokenId) {
@@ -504,18 +533,6 @@ class TextTokenColorizer {
     return `hsla(${hue}, 20%, 90%, ${opacity})`;
   }
 
-  getTokenCountColorFromLogId(logTokenId) {
-    // Superscript color based on token ID log value
-    const maxLogId = 5.0;
-    const normalized = Math.min(logTokenId / maxLogId, 1);
-    
-    // Use a more saturated color for the superscript
-    const hue = (1 - normalized) * 240;
-    const saturation = 90;
-    const lightness = 40;
-    
-    return `hsl(${hue}, ${saturation}%, ${lightness}%)`;
-  }
 }
 
 // Initialize the colorizer when the page loads

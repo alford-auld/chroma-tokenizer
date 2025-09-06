@@ -1,15 +1,15 @@
 # Text Token Colorizer Chrome Extension
 
-A Chrome extension that extracts text from web pages, calculates tokens using GPT-OSS-20B tokenizer, and colorizes the text based on token count using a log scale color map.
+A Chrome extension that extracts text from web pages, calculates tokens using a local BPE tokenizer, and colorizes the text based on token ID using a log scale color map.
 
 ## Features
 
 - **Text Extraction**: Automatically extracts all readable text from web pages
-- **Token Calculation**: Uses GPT-OSS-20B tokenizer to count tokens in text segments
+- **Token Calculation**: Uses a local BPE tokenizer to count tokens in text segments
 - **Color Visualization**: Colorizes text based on token ID using a smooth log scale
   - Blue: Low token ID (common tokens)
   - Red: High token ID (rare tokens)
-- **Individual Token Display**: Shows each token separately with its logarithmic token ID as superscript
+- **Individual Token Display**: Shows each token separately with color-coded complexity
 - **Real-time Toggle**: Enable/disable colorization with a simple toggle
 - **Non-intrusive**: Preserves original page functionality and styling
 

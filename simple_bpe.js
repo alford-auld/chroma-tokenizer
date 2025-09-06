@@ -35,6 +35,15 @@ class SimpleBPE {
       return [];
     }
 
+    // Store the original text for reconstruction
+    this.lastText = text;
+    this.lastTokens = this.splitText(text);
+    
+    // Convert to token IDs for consistency with transformers.js
+    return this.lastTokens.map(token => this.getTokenId(token));
+  }
+  
+  splitText(text) {
     let tokens = [text];
     
     // Apply BPE-like splitting
@@ -58,11 +67,37 @@ class SimpleBPE {
       tokens = newTokens;
     }
     
-    // Filter out empty tokens and clean up
+    // Filter out empty tokens but preserve spaces
     return tokens
       .filter(token => token && token.length > 0)
-      .map(token => token.trim())
+      .map(token => {
+        // Only trim non-space tokens
+        if (/\s/.test(token)) {
+          return token; // Keep spaces as-is
+        } else {
+          return token.trim();
+        }
+      })
       .filter(token => token.length > 0);
+  }
+  
+  getTokenId(token) {
+    // Create a simple hash-based token ID
+    // This simulates what a real tokenizer would return
+    let hash = 0;
+    for (let i = 0; i < token.length; i++) {
+      const char = token.charCodeAt(i);
+      hash = ((hash << 5) - hash) + char;
+      hash = hash & hash; // Convert to 32-bit integer
+    }
+    // Make sure it's positive and in a reasonable range
+    return Math.abs(hash) % 50000; // Simulate a 50k vocabulary
+  }
+  
+  decode(tokenIds) {
+    // For SimpleBPE, we can't really decode back to original tokens
+    // since we don't store the mapping. This is a limitation of the fallback.
+    return tokenIds.map(id => `[token_${id}]`).join('');
   }
 }
 
