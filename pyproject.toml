@@ -1,0 +1,13 @@
+[project]
+name = "tokenizer-test"
+version = "0.1.0"
+description = "Test tokenization logic for Chrome extension"
+requires-python = ">=3.8"
+dependencies = [
+    "transformers>=4.21.0",
+    "torch>=1.12.0",
+    "tokenizers>=0.13.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["."]

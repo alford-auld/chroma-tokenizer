@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Page for Text Token Colorizer</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        .section {
+            margin: 30px 0;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+        }
+        h1, h2, h3 {
+            color: #333;
+        }
+        .simple-text {
+            font-size: 16px;
+        }
+        .complex-text {
+            font-size: 14px;
+            font-style: italic;
+        }
+        .very-complex-text {
+            font-size: 12px;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <h1>Test Page for Text Token Colorizer Extension</h1>
+    
+    <div class="section">
+        <h2>Simple Text (Low Token Count)</h2>
+        <p class="simple-text">This is simple text. It has short words. Easy to read.</p>
+        <p class="simple-text">Hello world. How are you? I am fine.</p>
+    </div>
+    
+    <div class="section">
+        <h2>Medium Complexity Text</h2>
+        <p class="complex-text">This paragraph contains more complex vocabulary and longer sentences that should result in a moderate token count when processed by the GPT-2 tokenizer. The text includes various punctuation marks, contractions, and slightly more sophisticated language patterns.</p>
+        <p class="complex-text">The quick brown fox jumps over the lazy dog. This sentence contains every letter of the alphabet and demonstrates various linguistic features that might affect tokenization.</p>
+    </div>
+    
+    <div class="section">
+        <h2>Complex Text (High Token Count)</h2>
+        <p class="very-complex-text">This extraordinarily sophisticated and linguistically intricate paragraph demonstrates the remarkable capabilities of natural language processing systems, particularly when dealing with complex syntactic structures, advanced vocabulary, technical terminology, and multifaceted semantic relationships that exist within contemporary written communication paradigms.</p>
+        <p class="very-complex-text">The implementation of machine learning algorithms, particularly those based on transformer architectures, has revolutionized the field of computational linguistics, enabling unprecedented advances in natural language understanding, generation, and manipulation across diverse domains and applications.</p>
+    </div>
+    
+    <div class="section">
+        <h2>Mixed Content</h2>
+        <p>This section contains <strong>bold text</strong>, <em>italic text</em>, and <a href="#">links</a>.</p>
+        <ul>
+            <li>First item with simple text</li>
+            <li>Second item with more complex linguistic structures and sophisticated vocabulary</li>
+            <li>Third item containing technical terminology and specialized jargon</li>
+        </ul>
+        <blockquote>
+            "This is a blockquote with quoted text that might have different tokenization characteristics compared to regular paragraph text."
+        </blockquote>
+    </div>
+    
+    <div class="section">
+        <h2>Instructions</h2>
+        <ol>
+            <li>Install the Text Token Colorizer Chrome extension</li>
+            <li>Click the extension icon in your toolbar</li>
+            <li>Toggle the switch to enable colorization</li>
+            <li>Observe how different text sections get colored based on their token complexity</li>
+            <li>Blue = low token count, Red = high token count</li>
+        </ol>
+    </div>
+</body>
+</html>

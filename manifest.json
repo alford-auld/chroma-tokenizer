@@ -1,0 +1,31 @@
+{
+  "manifest_version": 3,
+  "name": "Text Token Colorizer",
+  "version": "1.0",
+  "description": "Extract text from web pages, calculate tokens, and colorize based on token count",
+  "permissions": [
+    "activeTab",
+    "storage"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "css": ["content.css"],
+      "run_at": "document_end"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Text Token Colorizer"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["simple_bpe.js"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}
