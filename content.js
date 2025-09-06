@@ -3,7 +3,7 @@ class TextTokenColorizer {
   constructor() {
     this.tokenizer = null;
     this.isActive = false;
-    this.originalStyles = new Map();
+    this.originalTexts = new Map(); // Store original text content
     this.init();
   }
 
@@ -226,56 +226,26 @@ class TextTokenColorizer {
     // Find all processed elements and restore original text nodes
     const processedElements = document.querySelectorAll('.text-token-processed');
     processedElements.forEach(wrapper => {
-      // Reconstruct the original text from all child elements
-      let originalText = '';
-      
-      // Walk through all child nodes
-      const walker = document.createTreeWalker(
-        wrapper,
-        NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT,
-        {
-          acceptNode: (node) => {
-            if (node.nodeType === Node.TEXT_NODE) {
-              return NodeFilter.FILTER_ACCEPT;
-            } else if (node.classList.contains('individual-token')) {
-              // Get text content from token spans (excluding superscript)
-              const textContent = Array.from(node.childNodes)
-                .filter(child => child.nodeType === Node.TEXT_NODE)
-                .map(child => child.textContent)
-                .join('');
-              return textContent ? NodeFilter.FILTER_ACCEPT : NodeFilter.REJECT;
-            } else if (node.classList.contains('token-whitespace')) {
-              return NodeFilter.FILTER_ACCEPT;
-            }
-            return NodeFilter.FILTER_REJECT;
-          }
-        }
+      // Get the original text node that was replaced
+      const originalTextNode = Array.from(this.originalTexts.keys()).find(node => 
+        wrapper.parentNode === node.parentNode
       );
       
-      let node;
-      while (node = walker.nextNode()) {
-        if (node.nodeType === Node.TEXT_NODE) {
-          originalText += node.textContent;
-        } else if (node.classList.contains('individual-token')) {
-          // Get text content from token spans (excluding superscript)
-          const textContent = Array.from(node.childNodes)
-            .filter(child => child.nodeType === Node.TEXT_NODE)
-            .map(child => child.textContent)
-            .join('');
-          originalText += textContent;
-        } else if (node.classList.contains('token-whitespace')) {
-          originalText += node.textContent;
-        }
+      if (originalTextNode) {
+        // Restore the exact original text
+        const originalText = this.originalTexts.get(originalTextNode);
+        const newTextNode = document.createTextNode(originalText);
+        wrapper.parentNode.replaceChild(newTextNode, wrapper);
+        this.originalTexts.delete(originalTextNode);
+      } else {
+        // Fallback: use textContent
+        const originalText = wrapper.textContent;
+        const textNode = document.createTextNode(originalText);
+        wrapper.parentNode.replaceChild(textNode, wrapper);
       }
-      
-      // Create a new text node with the original text
-      const textNode = document.createTextNode(originalText);
-      
-      // Replace the wrapper with the original text node
-      wrapper.parentNode.replaceChild(textNode, wrapper);
     });
     
-    this.originalStyles.clear();
+    this.originalTexts.clear();
   }
 
   async processTextNodes() {
@@ -328,6 +298,9 @@ class TextTokenColorizer {
           continue;
         }
 
+        // Store original text for perfect restoration
+        this.originalTexts.set(textNode, text);
+
         // Tokenize the text
         let tokenIds, tokenTexts;
         
@@ -378,15 +351,6 @@ class TextTokenColorizer {
         const wrapper = document.createElement('span');
         wrapper.className = 'text-token-processed';
 
-        // Handle leading whitespace
-        const leadingWhitespace = text.match(/^\s*/)[0];
-        if (leadingWhitespace) {
-          const spaceSpan = document.createElement('span');
-          spaceSpan.textContent = leadingWhitespace;
-          spaceSpan.className = 'token-whitespace';
-          wrapper.appendChild(spaceSpan);
-        }
-
         // Process each token individually, preserving spaces
         for (let i = 0; i < tokenIds.length; i++) {
           const tokenId = tokenIds[i];
@@ -420,12 +384,6 @@ class TextTokenColorizer {
         
         // Replace the text node with our wrapper
         textNode.parentNode.replaceChild(wrapper, textNode);
-        
-        // Store original style for restoration
-        this.originalStyles.set(wrapper, {
-          color: wrapper.style.color || '',
-          backgroundColor: wrapper.style.backgroundColor || ''
-        });
         
       } catch (error) {
         console.error('Error processing text node:', error);
@@ -559,7 +517,7 @@ class TextTokenColorizer {
   getTokenColorFromLogId(logTokenId) {
     // Color based on token ID log value - continuous scale
     // Map log values from 0 to ~6.0 to lightness from 100% to 0%
-    const maxLogId = 6.0; // Adjust based on your tokenizer's vocabulary size
+    const maxLogId = 5.5; // Adjust based on your tokenizer's vocabulary size
     const normalized = Math.min(logTokenId / maxLogId, 1);
     
     // Create a smooth continuous grayscale gradient
@@ -568,19 +526,6 @@ class TextTokenColorizer {
     const lightness = 100 - (powerNormalized * 100); // 100% (white) to 0% (black)
     
     return `hsl(0, 0%, ${lightness}%)`;
-  }
-
-  getBackgroundColorFromLogId(logTokenId) {
-    // Background color based on token ID log value - continuous scale
-    const maxLogId = 6.0;
-    const normalized = Math.min(logTokenId / maxLogId, 1);
-    
-    // Create a smooth continuous background gradient
-    const powerNormalized = Math.pow(normalized, 0.7); // Makes transition more gradual
-    const opacity = powerNormalized * 0.1; // Very subtle background
-    const lightness = 95 - (powerNormalized * 20); // Light gray to darker gray
-    
-    return `hsla(0, 0%, ${lightness}%, ${opacity})`;
   }
 
 }
