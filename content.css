@@ -14,16 +14,13 @@
 /* Style for individual tokens */
 .individual-token {
   display: inline-block;
-  padding: 1px 2px;
-  margin: 0 1px;
+  padding: 0;
+  margin: 0;
   border-radius: 3px;
   transition: all 0.2s ease;
 }
 
-.individual-token:hover {
-  transform: scale(1.05);
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-}
+/* No hover effects - color-only visualization */
 
 /* Style for token whitespace */
 .token-whitespace {

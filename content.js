@@ -179,6 +179,21 @@ class TextTokenColorizer {
   testTokenizer() {
     const testText = "Hello world! This is a test.";
     try {
+      // Check if we're using server tokenizer
+      if (this.tokenizer.type === 'server') {
+        console.log('🔍 Server Tokenizer Verification Test:');
+        console.log('Using server tokenizer - skipping local test');
+        console.log('Server model:', this.tokenizer.model_name);
+        console.log('Note: Server tokenization will be tested during text processing');
+        return;
+      }
+      
+      // For local tokenizers, test the encode method
+      if (!this.tokenizer.encode) {
+        console.error('Tokenizer does not have encode method');
+        return;
+      }
+      
       const tokens = this.tokenizer.encode(testText);
       console.log('🔍 Tokenizer Verification Test:');
       console.log('Input:', testText);
@@ -228,7 +243,7 @@ class TextTokenColorizer {
                 .filter(child => child.nodeType === Node.TEXT_NODE)
                 .map(child => child.textContent)
                 .join('');
-              return textContent ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+              return textContent ? NodeFilter.FILTER_ACCEPT : NodeFilter.REJECT;
             } else if (node.classList.contains('token-whitespace')) {
               return NodeFilter.FILTER_ACCEPT;
             }
@@ -303,12 +318,12 @@ class TextTokenColorizer {
     for (const textNode of textNodes) {
       if (!this.isActive) break;
       
-      const text = textNode.textContent.trim();
-      if (text.length === 0) continue;
+      const text = textNode.textContent;
+      if (text.trim().length === 0) continue;
 
       try {
         // Check if text contains only digits - skip tokenization
-        if (/^\d+$/.test(text)) {
+        if (/^\s*\d+\s*$/.test(text)) {
           console.log('Skipping digit-only text:', text);
           continue;
         }
@@ -362,15 +377,45 @@ class TextTokenColorizer {
         // Create a wrapper element for all tokens
         const wrapper = document.createElement('span');
         wrapper.className = 'text-token-processed';
-        
-        // Process each token individually
+
+        // Handle leading whitespace
+        const leadingWhitespace = text.match(/^\s*/)[0];
+        if (leadingWhitespace) {
+          const spaceSpan = document.createElement('span');
+          spaceSpan.textContent = leadingWhitespace;
+          spaceSpan.className = 'token-whitespace';
+          wrapper.appendChild(spaceSpan);
+        }
+
+        // Process each token individually, preserving spaces
         for (let i = 0; i < tokenIds.length; i++) {
           const tokenId = tokenIds[i];
-          const tokenText = tokenTexts[i] || `[token_${tokenId}]`;
-          
+          let tokenText = tokenTexts[i] || `[token_${tokenId}]`;
+
+          // Handle space preservation - if token starts with space, add it before the token
+          if (tokenText.startsWith(' ')) {
+            // Add a space element before the token
+            const spaceSpan = document.createElement('span');
+            spaceSpan.textContent = ' ';
+            spaceSpan.className = 'token-whitespace';
+            wrapper.appendChild(spaceSpan);
+            
+            // Remove the leading space from the token
+            tokenText = tokenText.substring(1);
+          }
+
           // Create the token span with actual token ID
           const tokenSpan = this.createTokenSpan(tokenText, i + 1, tokenId);
           wrapper.appendChild(tokenSpan);
+        }
+
+        // Handle trailing whitespace
+        const trailingWhitespace = text.match(/\s*$/)[0];
+        if (trailingWhitespace) {
+          const spaceSpan = document.createElement('span');
+          spaceSpan.textContent = trailingWhitespace;
+          spaceSpan.className = 'token-whitespace';
+          wrapper.appendChild(spaceSpan);
         }
         
         // Replace the text node with our wrapper
@@ -448,47 +493,36 @@ class TextTokenColorizer {
   }
 
   createTokenSpan(token, tokenIndex, tokenId = null) {
-    // Check if token is only digits - keep them black
-    const isDigitOnly = /^\d+$/.test(token);
-    
-    // Calculate color based on token ID log value instead of position
-    let color, bgColor;
-    
-    if (isDigitOnly) {
-      // Keep digits black (no colorization)
-      color = 'black';
-      bgColor = 'transparent';
-    } else if (tokenId !== null && typeof tokenId === 'number') {
-      // Use token ID log value for coloring
-      const logTokenId = Math.log10(tokenId + 1); // +1 to avoid log(0)
-      color = this.getTokenColorFromLogId(logTokenId);
-      bgColor = this.getBackgroundColorFromLogId(logTokenId);
-    } else {
-      // Fallback to position-based coloring
-      color = this.getTokenColor(tokenIndex);
-      bgColor = this.getBackgroundColor(tokenIndex);
-    }
+        // Check if token is only digits - keep them black
+        const isDigitOnly = /^\d+$/.test(token);
+
+        // Calculate color based on token ID log value instead of position
+        let color;
+
+        if (isDigitOnly) {
+          // Keep digits black (no colorization)
+          color = 'black';
+        } else if (tokenId !== null && typeof tokenId === 'number') {
+          // Use token ID log value for coloring
+          const logTokenId = Math.log10(tokenId + 1); // +1 to avoid log(0)
+          color = this.getTokenColorFromLogId(logTokenId);
+        } else {
+          // Fallback to position-based coloring
+          color = this.getTokenColor(tokenIndex);
+        }
     
     // Create the token span
     const tokenSpan = document.createElement('span');
     tokenSpan.className = 'individual-token';
     tokenSpan.textContent = token;
     tokenSpan.style.color = color;
-    tokenSpan.style.backgroundColor = bgColor;
-    tokenSpan.style.padding = '1px 2px';
-    tokenSpan.style.margin = '0 1px';
+    tokenSpan.style.backgroundColor = 'transparent';
+        tokenSpan.style.padding = '0';
+        tokenSpan.style.margin = '0';
     tokenSpan.style.borderRadius = '3px';
     tokenSpan.style.display = 'inline-block';
     
-    // Add tooltip with token information
-    if (isDigitOnly) {
-      tokenSpan.title = `Digit: ${token}`;
-    } else if (tokenId !== null && typeof tokenId === 'number') {
-      const logTokenId = Math.log10(tokenId + 1);
-      tokenSpan.title = `Token ID: ${tokenId} (log: ${logTokenId.toFixed(2)})`;
-    } else {
-      tokenSpan.title = `Position: ${tokenIndex}`;
-    }
+        // No tooltips - color-only visualization
     
     return tokenSpan;
   }
@@ -524,8 +558,8 @@ class TextTokenColorizer {
   // New methods for token ID log-based coloring
   getTokenColorFromLogId(logTokenId) {
     // Color based on token ID log value - continuous scale
-    // Map log values from 0 to ~5.3 to lightness from 100% to 0%
-    const maxLogId = 5.3; // Adjust based on your tokenizer's vocabulary size
+    // Map log values from 0 to ~6.0 to lightness from 100% to 0%
+    const maxLogId = 6.0; // Adjust based on your tokenizer's vocabulary size
     const normalized = Math.min(logTokenId / maxLogId, 1);
     
     // Create a smooth continuous grayscale gradient
@@ -538,7 +572,7 @@ class TextTokenColorizer {
 
   getBackgroundColorFromLogId(logTokenId) {
     // Background color based on token ID log value - continuous scale
-    const maxLogId = 5.3;
+    const maxLogId = 6.0;
     const normalized = Math.min(logTokenId / maxLogId, 1);
     
     // Create a smooth continuous background gradient

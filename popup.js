@@ -13,7 +13,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     updateUI(response.active);
   } catch (error) {
     console.error('Error getting status:', error);
-    status.textContent = 'Error: Please refresh the page';
+    // Show helpful message instead of generic error
+    status.textContent = 'Please refresh the page to use the extension';
     status.className = 'status inactive';
   }
   
@@ -24,7 +25,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       updateUI(response.active);
     } catch (error) {
       console.error('Error toggling:', error);
-      status.textContent = 'Error: Please refresh the page';
+      status.textContent = 'Please refresh the page to use the extension';
       status.className = 'status inactive';
     }
   });
