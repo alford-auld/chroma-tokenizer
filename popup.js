@@ -10,6 +10,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   try {
     const response = await chrome.tabs.sendMessage(tab.id, { action: 'getStatus' });
     updateUI(response.active);
+    
+    // Also get prediction mode status
+    const predictionResponse = await chrome.tabs.sendMessage(tab.id, { action: 'getPredictionStatus' });
+    updatePredictionUI(predictionResponse.predictionMode);
   } catch (error) {
     status.textContent = 'Please refresh the page to use the extension';
     status.className = 'status inactive';
