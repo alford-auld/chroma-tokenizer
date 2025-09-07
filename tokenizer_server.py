@@ -42,23 +42,39 @@ def load_models():
         except Exception as e:
             logger.warning(f"Failed to load Jina tokenizer: {e}")
         
-        # Load RoBERTa for MLM predictions
+        # Load Spanish-optimized CASED model for MLM predictions
         try:
-            logger.info("Loading RoBERTa for MLM predictions...")
-            mlm_tokenizer = AutoTokenizer.from_pretrained("roberta-base")
-            mlm_model = AutoModelForMaskedLM.from_pretrained("roberta-base")
-            logger.info("✅ RoBERTa MLM model loaded successfully!")
+            logger.info("Loading BETO Cased (Spanish BERT) for MLM predictions...")
+            mlm_tokenizer = AutoTokenizer.from_pretrained("dccuchile/bert-base-spanish-wwm-cased")
+            mlm_model = AutoModelForMaskedLM.from_pretrained("dccuchile/bert-base-spanish-wwm-cased")
+            logger.info("✅ BETO Cased Spanish MLM model loaded successfully!")
         except Exception as e:
-            logger.warning(f"Failed to load RoBERTa: {e}")
-            # Fallback to DistilBERT
+            logger.warning(f"Failed to load BETO Cased: {e}")
+            # Fallback to BERTIN RoBERTa
             try:
-                logger.info("Falling back to DistilBERT...")
-                mlm_tokenizer = AutoTokenizer.from_pretrained("distilbert-base-cased")
-                mlm_model = AutoModelForMaskedLM.from_pretrained("distilbert-base-cased")
-                logger.info("✅ DistilBERT MLM model loaded successfully!")
+                logger.info("Falling back to BERTIN RoBERTa Spanish...")
+                mlm_tokenizer = AutoTokenizer.from_pretrained("bertin-project/bertin-roberta-base-spanish")
+                mlm_model = AutoModelForMaskedLM.from_pretrained("bertin-project/bertin-roberta-base-spanish")
+                logger.info("✅ BERTIN RoBERTa Spanish MLM model loaded successfully!")
             except Exception as e2:
-                logger.error(f"Failed to load DistilBERT: {e2}")
-                return False
+                logger.warning(f"Failed to load BERTIN: {e2}")
+                # Fallback to original BETO uncased
+                try:
+                    logger.info("Falling back to BETO Uncased...")
+                    mlm_tokenizer = AutoTokenizer.from_pretrained("dccuchile/bert-base-spanish-wwm-uncased")
+                    mlm_model = AutoModelForMaskedLM.from_pretrained("dccuchile/bert-base-spanish-wwm-uncased")
+                    logger.info("✅ BETO Uncased Spanish MLM model loaded successfully!")
+                except Exception as e3:
+                    logger.warning(f"Failed to load BETO Uncased: {e3}")
+                    # Final fallback to multilingual BERT
+                    try:
+                        logger.info("Falling back to Multilingual BERT Cased...")
+                        mlm_tokenizer = AutoTokenizer.from_pretrained("bert-base-multilingual-cased")
+                        mlm_model = AutoModelForMaskedLM.from_pretrained("bert-base-multilingual-cased")
+                        logger.info("✅ Multilingual BERT Cased MLM model loaded successfully!")
+                    except Exception as e4:
+                        logger.error(f"Failed to load Multilingual BERT: {e4}")
+                        return False
         
         # If Jina failed, use RoBERTa tokenizer for everything
         if not jina_loaded:
@@ -113,7 +129,7 @@ def health():
 
 @app.route('/tokenize_display', methods=['POST'])
 def tokenize_display():
-    """Tokenization optimized for display - uses MLM tokenizer for consistency"""
+    """Tokenization optimized for display - preserves case and proper token boundaries"""
     try:
         data = request.get_json()
         text = data.get('text', '')
@@ -133,9 +149,42 @@ def tokenize_display():
         current_pos = 0
         
         for i, token in enumerate(tokens):
+            # Handle different tokenizer formats
+            if token.startswith('Ġ'):  # RoBERTa format
+                # Remove the Ġ prefix but keep the space
+                clean_token = token[1:]  # Remove Ġ but keep the token
+                display_token = clean_token
+                # Add space before token if it's not the first token
+                if i > 0:
+                    display_token = ' ' + clean_token
+            elif token.startswith('▁'):  # SentencePiece format
+                clean_token = token[1:]  # Remove ▁
+                display_token = clean_token
+            else:
+                clean_token = token
+                display_token = token
+            
             # Find where this token appears in the reconstructed text
-            clean_token = token.replace('Ġ', '').replace('▁', '')
             if clean_token:
+                # For RoBERTa, we need to handle spaces properly
+                if token.startswith('Ġ') and i > 0:
+                    # Look for the token with space
+                    search_text = ' ' + clean_token
+                    start_pos = reconstructed.find(search_text, current_pos)
+                    if start_pos != -1:
+                        end_pos = start_pos + len(search_text)
+                        token_positions.append({
+                            'token': clean_token,  # Clean token without space
+                            'token_id': token_ids[i],
+                            'start': start_pos,
+                            'end': end_pos,
+                            'original_token': token,
+                            'has_space_prefix': True
+                        })
+                        current_pos = end_pos
+                        continue
+                
+                # Regular token search
                 start_pos = reconstructed.find(clean_token, current_pos)
                 if start_pos != -1:
                     end_pos = start_pos + len(clean_token)
@@ -144,7 +193,8 @@ def tokenize_display():
                         'token_id': token_ids[i],
                         'start': start_pos,
                         'end': end_pos,
-                        'original_token': token
+                        'original_token': token,
+                        'has_space_prefix': False
                     })
                     current_pos = end_pos
         
@@ -155,7 +205,7 @@ def tokenize_display():
             "match": text.strip() == reconstructed.strip(),
             "token_count": len(token_positions),
             "token_positions": token_positions,
-            "original_tokens": tokens,  # Add this line
+            "original_tokens": tokens,
             "word_level": False
         })
         
@@ -167,6 +217,11 @@ def tokenize_display():
 def predict_tokens():
     """Predict tokens at masked positions"""
     try:
+        # Check if MLM model is loaded
+        if not mlm_model or not mlm_tokenizer:
+            logger.error("MLM model or tokenizer not loaded")
+            return jsonify({"error": "MLM model not loaded"}), 500
+        
         data = request.get_json()
         text = data.get('text', '')
         masked_positions = data.get('masked_positions', [])
@@ -174,17 +229,28 @@ def predict_tokens():
         if not text:
             return jsonify({"error": "No text provided"}), 400
         
+        logger.info(f"Predicting tokens for text: '{text[:50]}...' at positions: {masked_positions}")
+        
         # Use the MLM tokenizer for consistent tokenization
         tokens = mlm_tokenizer.tokenize(text)
         token_ids = mlm_tokenizer.convert_tokens_to_ids(tokens)
         
-        # Add special tokens for proper MLM prediction
-        # RoBERTa expects <s> at the beginning and </s> at the end
-        tokens_with_special = [mlm_tokenizer.bos_token] + tokens + [mlm_tokenizer.eos_token]
-        token_ids_with_special = [mlm_tokenizer.bos_token_id] + token_ids + [mlm_tokenizer.eos_token_id]
+        logger.info(f"Tokenized into {len(tokens)} tokens: {tokens[:10]}...")
         
-        # Adjust masked positions to account for the added <s> token
-        adjusted_positions = [pos + 1 for pos in masked_positions]
+        # Add special tokens for proper MLM prediction
+        # Check if tokenizer has BOS/EOS tokens
+        if hasattr(mlm_tokenizer, 'bos_token') and mlm_tokenizer.bos_token:
+            tokens_with_special = [mlm_tokenizer.bos_token] + tokens + [mlm_tokenizer.eos_token]
+            token_ids_with_special = [mlm_tokenizer.bos_token_id] + token_ids + [mlm_tokenizer.eos_token_id]
+            special_offset = 1
+        else:
+            # For BERT models, use CLS and SEP
+            tokens_with_special = [mlm_tokenizer.cls_token] + tokens + [mlm_tokenizer.sep_token]
+            token_ids_with_special = [mlm_tokenizer.cls_token_id] + token_ids + [mlm_tokenizer.sep_token_id]
+            special_offset = 1
+        
+        # Adjust masked positions to account for the added special token
+        adjusted_positions = [pos + special_offset for pos in masked_positions]
         
         # Create masked input
         masked_tokens = tokens_with_special.copy()
@@ -194,6 +260,8 @@ def predict_tokens():
             if 0 <= pos < len(masked_tokens):
                 masked_tokens[pos] = mlm_tokenizer.mask_token
                 masked_token_ids[pos] = mlm_tokenizer.mask_token_id
+        
+        logger.info(f"Masked tokens: {masked_tokens}")
         
         # Convert to tensor and predict
         input_ids = torch.tensor([masked_token_ids])
@@ -205,7 +273,7 @@ def predict_tokens():
         # Get predictions for each masked position
         results = []
         for i, pos in enumerate(masked_positions):
-            adjusted_pos = pos + 1  # Account for <s> token
+            adjusted_pos = pos + special_offset  # Account for special token
             if 0 <= adjusted_pos < len(tokens_with_special):
                 # Get top predictions for this position
                 position_logits = predictions[adjusted_pos]
@@ -234,6 +302,8 @@ def predict_tokens():
                     'predictions': predictions_list
                 })
         
+        logger.info(f"Generated {len(results)} predictions")
+        
         return jsonify({
             "success": True,
             "text": text,
@@ -242,7 +312,7 @@ def predict_tokens():
         })
         
     except Exception as e:
-        logger.error(f"Prediction error: {e}")
+        logger.error(f"Prediction error: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 @app.route('/predict_context', methods=['POST'])
