@@ -129,7 +129,7 @@ def health():
 
 @app.route('/tokenize_display', methods=['POST'])
 def tokenize_display():
-    """Tokenization optimized for display - creates individual spans for each token"""
+    """Tokenization optimized for display - properly handles punctuation and spacing"""
     try:
         data = request.get_json()
         text = data.get('text', '')
@@ -141,7 +141,10 @@ def tokenize_display():
         tokens = mlm_tokenizer.tokenize(text)
         token_ids = mlm_tokenizer.convert_tokens_to_ids(tokens)
         
-        # Create token positions by building the text token by token
+        # Get the reconstructed text using the tokenizer's native method
+        reconstructed = mlm_tokenizer.convert_tokens_to_string(tokens)
+        
+        # Create token positions by mapping back to the reconstructed text
         token_positions = []
         current_pos = 0
         
@@ -160,42 +163,41 @@ def tokenize_display():
                 clean_token = token
                 is_subword = False
             
-            # Add space before token if needed
-            if i > 0 and not is_subword and not token.startswith('Ġ'):
-                # Add space for BERT tokens that don't have Ġ prefix
-                current_pos += 1
-            
-            # Record token position
-            start_pos = current_pos
-            end_pos = current_pos + len(clean_token)
-            
-            token_positions.append({
-                'token': clean_token,
-                'token_id': token_ids[i],
-                'start': start_pos,
-                'end': end_pos,
-                'original_token': token,
-                'is_subword': is_subword
-            })
-            
-            current_pos = end_pos
-        
-        # Reconstruct text from tokens
-        reconstructed_parts = []
-        for i, token in enumerate(tokens):
-            if token.startswith('##'):
-                reconstructed_parts.append(token[2:])
-            elif token.startswith('Ġ'):
-                reconstructed_parts.append(' ' + token[1:])
-            elif token.startswith('▁'):
-                reconstructed_parts.append(token[1:])
-            else:
-                if i > 0 and not token.startswith('Ġ'):
-                    reconstructed_parts.append(' ' + token)
-                else:
-                    reconstructed_parts.append(token)
-        
-        reconstructed = ''.join(reconstructed_parts)
+            # Find this token in the reconstructed text
+            if clean_token:
+                # For RoBERTa tokens with Ġ, we need to handle spaces properly
+                if token.startswith('Ġ') and i > 0:
+                    # Look for the token with space prefix
+                    search_text = ' ' + clean_token
+                    start_pos = reconstructed.find(search_text, current_pos)
+                    if start_pos != -1:
+                        end_pos = start_pos + len(search_text)
+                        token_positions.append({
+                            'token': clean_token,
+                            'token_id': token_ids[i],
+                            'start': start_pos + 1,  # Skip the space
+                            'end': end_pos,
+                            'original_token': token,
+                            'is_subword': is_subword,
+                            'has_space_prefix': True
+                        })
+                        current_pos = end_pos
+                        continue
+                
+                # Regular token search
+                start_pos = reconstructed.find(clean_token, current_pos)
+                if start_pos != -1:
+                    end_pos = start_pos + len(clean_token)
+                    token_positions.append({
+                        'token': clean_token,
+                        'token_id': token_ids[i],
+                        'start': start_pos,
+                        'end': end_pos,
+                        'original_token': token,
+                        'is_subword': is_subword,
+                        'has_space_prefix': False
+                    })
+                    current_pos = end_pos
         
         return jsonify({
             "success": True,

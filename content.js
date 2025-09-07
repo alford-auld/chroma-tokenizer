@@ -244,7 +244,7 @@ class TextTokenColorizer {
     // Create wrapper and process tokens using native reconstruction
     const wrapper = document.createElement('span');
     wrapper.className = 'text-token-processed';
-
+  
     // Use the reconstructed text and token positions
     const reconstructed = result.reconstructed;
     const tokenPositions = result.token_positions;
@@ -388,18 +388,20 @@ class TextTokenColorizer {
 
   getTokenColor(tokenCount) {
     const logCount = Math.log10(Math.max(tokenCount, 1));
-    const maxLogCount = 4.0;
-    const normalized = Math.min(logCount / maxLogCount, 1);
-    const powerNormalized = Math.pow(normalized, 0.7);
-    const lightness = 100 - (powerNormalized * 100);
+    const minLogCount = 3.0;
+    const maxLogCount = 4.2;
+    const normalized = Math.min(Math.max(logCount, minLogCount) / maxLogCount, 1);
+    // const powerNormalized = Math.pow(normalized, 0.7);
+    const lightness = 100 - (normalized * 80);
     return `hsl(0, 0%, ${lightness}%)`;
   }
 
   getTokenColorFromLogId(logTokenId) {
-    const maxLogId = 5.5;
-    const normalized = Math.min(logTokenId / maxLogId, 1);
-    const powerNormalized = Math.pow(normalized, 0.7);
-    const lightness = 100 - (powerNormalized * 100);
+    const maxLightness = 80;
+    const minLogId = 3.0;
+    const maxLogId = 4.2;
+    const normalized = Math.min(Math.max((logTokenId - minLogId) / (maxLogId - minLogId), 0), 1);
+    const lightness = maxLightness * (1 - normalized);
     return `hsl(0, 0%, ${lightness}%)`;
   }
 }
