@@ -27,16 +27,20 @@ class TextTokenColorizer {
       const response = await fetch('http://localhost:5001/health');
       const health = await response.json();
       
-      if (health.mlm_tokenizer_loaded) {
+      // Check if any models are loaded
+      const hasModels = health.models_loaded && Object.values(health.models_loaded).some(loaded => loaded);
+      
+      if (hasModels) {
         this.tokenizer = {
           type: 'server',
-          model_name: health.model_name,
-          tokenizer_name: health.tokenizer_name,
-          mlm_available: health.mlm_model_loaded
+          available_languages: health.available_languages,
+          model_names: health.model_names,
+          mlm_available: true
         };
         return;
       }
     } catch (error) {
+      console.log('Server not available, using fallback:', error);
       // Server not available, continue to fallback
     }
     
@@ -203,6 +207,9 @@ class TextTokenColorizer {
           wrapper.appendChild(tokenSpan);
         });
         
+        // Remove text-align: justify from parent elements to prevent spacing issues
+        this.removeJustifyAlignment(textNode.parentNode);
+        
         textNode.parentNode.replaceChild(wrapper, textNode);
         
       } catch (error) {
@@ -246,6 +253,9 @@ class TextTokenColorizer {
       textSpan.style.color = 'inherit';
       wrapper.appendChild(textSpan);
     }
+    
+    // Remove text-align: justify from parent elements to prevent spacing issues
+    this.removeJustifyAlignment(textNode.parentNode);
     
     textNode.parentNode.replaceChild(wrapper, textNode);
   }
@@ -300,9 +310,6 @@ class TextTokenColorizer {
       color = this.getTokenColor(tokenIndex);
     }
     
-    const tokenSpan = document.createElement('span');
-    tokenSpan.className = 'individual-token';
-    
     // Handle Ġ replacement more intelligently
     let displayText = token;
     if (token.startsWith('Ġ')) {
@@ -313,38 +320,98 @@ class TextTokenColorizer {
       displayText = token.replace(/Ġ/g, '');
     }
     
-    tokenSpan.textContent = displayText;
-    tokenSpan.style.color = color;
-    tokenSpan.style.backgroundColor = 'transparent';
-    tokenSpan.style.padding = '0';
-    tokenSpan.style.margin = '0';
-    tokenSpan.style.borderRadius = '3px';
-    tokenSpan.style.display = 'inline-block';
-    tokenSpan.style.cursor = 'pointer';
-    
-    // Add data attributes for prediction
-    tokenSpan.dataset.tokenIndex = tokenIndex;
-    tokenSpan.dataset.tokenId = tokenId;
-    tokenSpan.dataset.context = context;
-    tokenSpan.dataset.originalToken = token;
-    
-    // Add click event listeners - token prediction is now always enabled
-    tokenSpan.addEventListener('click', (e) => {
-      e.stopPropagation();
-      this.handleTokenClick(tokenSpan);
-    });
-    
-    tokenSpan.addEventListener('mouseenter', () => {
-      tokenSpan.style.backgroundColor = 'rgba(74, 175, 80, 0.1)';
-    });
-    
-    tokenSpan.addEventListener('mouseleave', () => {
-      if (!tokenSpan.classList.contains('selected')) {
+    // Check if the display text contains spaces and split them
+    if (displayText.includes(' ')) {
+      // Create a container span to hold multiple spans
+      const containerSpan = document.createElement('span');
+      containerSpan.className = 'token-container';
+      containerSpan.style.display = 'inline-block';
+      
+      // Split by spaces and create separate spans
+      const parts = displayText.split(' ');
+      parts.forEach((part, partIndex) => {
+        if (part.length > 0) {
+          // Create span for the actual token part
+          const tokenSpan = document.createElement('span');
+          tokenSpan.className = 'individual-token';
+          tokenSpan.textContent = part;
+          tokenSpan.style.color = color;
+          tokenSpan.style.backgroundColor = 'transparent';
+          tokenSpan.style.padding = '0';
+          tokenSpan.style.margin = '0';
+          tokenSpan.style.borderRadius = '3px';
+          tokenSpan.style.display = 'inline-block';
+          tokenSpan.style.cursor = 'pointer';
+          
+          // Add data attributes for prediction
+          tokenSpan.dataset.tokenIndex = tokenIndex;
+          tokenSpan.dataset.tokenId = tokenId;
+          tokenSpan.dataset.context = context;
+          tokenSpan.dataset.originalToken = token;
+          
+          // Add click event listeners
+          tokenSpan.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.handleTokenClick(tokenSpan);
+          });
+          
+          tokenSpan.addEventListener('mouseenter', () => {
+            tokenSpan.style.backgroundColor = 'rgba(74, 175, 80, 0.1)';
+          });
+          
+          tokenSpan.addEventListener('mouseleave', () => {
+            tokenSpan.style.backgroundColor = 'transparent';
+          });
+          
+          containerSpan.appendChild(tokenSpan);
+        }
+        
+        // Add space span if not the last part
+        if (partIndex < parts.length - 1) {
+          const spaceSpan = document.createElement('span');
+          spaceSpan.innerHTML = '&nbsp;';  // Use &nbsp; instead of regular space
+          spaceSpan.style.color = 'inherit';
+          spaceSpan.className = 'token-space';
+          containerSpan.appendChild(spaceSpan);
+        }
+      });
+      
+      return containerSpan;
+    } else {
+      // No spaces, create single span as before
+      const tokenSpan = document.createElement('span');
+      tokenSpan.className = 'individual-token';
+      tokenSpan.textContent = displayText;
+      tokenSpan.style.color = color;
+      tokenSpan.style.backgroundColor = 'transparent';
+      tokenSpan.style.padding = '0';
+      tokenSpan.style.margin = '0';
+      tokenSpan.style.borderRadius = '3px';
+      tokenSpan.style.display = 'inline-block';
+      tokenSpan.style.cursor = 'pointer';
+      
+      // Add data attributes for prediction
+      tokenSpan.dataset.tokenIndex = tokenIndex;
+      tokenSpan.dataset.tokenId = tokenId;
+      tokenSpan.dataset.context = context;
+      tokenSpan.dataset.originalToken = token;
+      
+      // Add click event listeners
+      tokenSpan.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.handleTokenClick(tokenSpan);
+      });
+      
+      tokenSpan.addEventListener('mouseenter', () => {
+        tokenSpan.style.backgroundColor = 'rgba(74, 175, 80, 0.1)';
+      });
+      
+      tokenSpan.addEventListener('mouseleave', () => {
         tokenSpan.style.backgroundColor = 'transparent';
-      }
-    });
-    
-    return tokenSpan;
+      });
+      
+      return tokenSpan;
+    }
   }
 
   handleTokenClick(tokenSpan) {
@@ -364,11 +431,43 @@ class TextTokenColorizer {
 
   getTokenColorFromLogId(logTokenId) {
     const maxLightness = 80;
-    const minLogId = 3.0;
-    const maxLogId = 4.2;
+    const minLogId = 2.0;
+    const maxLogId = 5.2;
     const normalized = Math.min(Math.max((logTokenId - minLogId) / (maxLogId - minLogId), 0), 1);
     const lightness = maxLightness * (1 - normalized);
     return `hsl(0, 0%, ${lightness}%)`;
+  }
+
+  removeJustifyAlignment(element) {
+    // Walk up the DOM tree and remove text-align: justify from parent elements
+    let current = element;
+    while (current && current !== document.body) {
+      // Check if element has justify-related classes
+      if (current.classList) {
+        const hasJustifyClass = Array.from(current.classList).some(cls => 
+          cls.toLowerCase().includes('justif') || 
+          cls.toLowerCase().includes('justificado')
+        );
+        
+        if (hasJustifyClass) {
+          // Add a class to override justify alignment
+          current.classList.add('tokenizer-override-justify');
+        }
+      }
+      
+      // Check inline styles
+      if (current.style && current.style.textAlign === 'justify') {
+        current.style.setProperty('text-align', 'left', 'important');
+      }
+      
+      // Check computed styles and override with !important
+      const computedStyle = window.getComputedStyle(current);
+      if (computedStyle.textAlign === 'justify') {
+        current.style.setProperty('text-align', 'left', 'important');
+      }
+      
+      current = current.parentNode;
+    }
   }
 }
 
@@ -462,18 +561,32 @@ class TokenPredictor {
     popup.className = 'token-prediction-popup';
     popup.dataset.tokenId = tokenSpan.dataset.tokenId;
     
-    // Clean up the original token for display
+    // Clean up the original token for display - normalize spaces and special tokens
     const originalToken = tokenSpan.dataset.originalToken || '';
-    const cleanOriginalToken = originalToken.replace(/Ġ/g, '').replace(/▁/g, '');
+    const cleanOriginalToken = originalToken
+      .replace(/Ġ/g, '')  // Remove RoBERTa space markers
+      .replace(/▁/g, '')   // Remove SentencePiece markers
+      .replace(/^ +| +$/g, '')  // Trim leading/trailing spaces
+      .trim();
     
     // Get the original token's probability
     const originalProbability = prediction.original_probability || 0;
     
+    // Normalize function for consistent token comparison
+    const normalizeToken = (token) => {
+      return token
+        .replace(/Ġ/g, '')  // Remove RoBERTa space markers
+        .replace(/▁/g, '')   // Remove SentencePiece markers
+        .replace(/^ +| +$/g, '')  // Trim leading/trailing spaces
+        .trim();
+    };
+    
     // Filter alternatives: probability > 5%, not current token, max 3
     const filteredPredictions = prediction.predictions
       .filter(pred => {
-        const cleanPredToken = pred.token.replace(/Ġ/g, '').replace(/▁/g, '');
-        return pred.probability > 0.05 && cleanPredToken !== cleanOriginalToken;
+        const cleanPredToken = normalizeToken(pred.token);
+        const cleanOriginal = normalizeToken(originalToken);
+        return pred.probability > 0.05 && cleanPredToken !== cleanOriginal;
       })
       .slice(0, 3); // Limit to 3 alternatives
     
@@ -490,7 +603,7 @@ class TokenPredictor {
           <strong>Alternatives:</strong>
           ${filteredPredictions.map((pred, index) => `
             <div class="prediction-item" data-token="${pred.token}" data-probability="${pred.probability}">
-              <span class="token">${pred.token.replace(/Ġ/g, '').replace(/▁/g, '')}</span>
+              <span class="token">${normalizeToken(pred.token)}</span>
               <span class="probability">${(pred.probability * 100).toFixed(1)}%</span>
             </div>
           `).join('')}

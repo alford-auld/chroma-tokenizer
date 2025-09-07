@@ -11,6 +11,16 @@
   display: inline;
 }
 
+/* Override justify alignment for tokenized content */
+.tokenizer-override-justify {
+  text-align: left !important;
+}
+
+/* Ensure tokenized content doesn't inherit justify */
+.text-token-processed {
+  text-align: left !important;
+}
+
 /* Style for individual tokens */
 .individual-token {
   display: inline-block;
@@ -18,6 +28,21 @@
   margin: 0;
   border-radius: 3px;
   transition: all 0.2s ease;
+  text-align: left !important;
+}
+
+/* Style for token spaces */
+.token-space {
+  display: inline;
+  white-space: pre;
+  color: inherit;
+  text-align: left !important;
+}
+
+/* Style for token containers */
+.token-container {
+  display: inline-block;
+  text-align: left !important;
 }
 
 /* No hover effects - color-only visualization */

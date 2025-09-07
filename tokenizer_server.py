@@ -2,7 +2,7 @@
 """
 Local tokenizer server for Chrome extension
 Provides tokenization services and masked language modeling using transformers
-Uses XLM-RoBERTa multilingual model for both tokenization and MLM predictions
+Uses language-specific models: RoBERTa for English, BETO Cased for Spanish, XLM-RoBERTa for others
 """
 
 import json
@@ -12,6 +12,7 @@ from flask_cors import CORS
 from transformers import AutoTokenizer, AutoModelForMaskedLM
 import torch
 import torch.nn.functional as F
+from langdetect import detect, LangDetectException
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -20,44 +21,104 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 CORS(app)  # Enable CORS for Chrome extension
 
-# Global models
-mlm_model = None
-mlm_tokenizer = None
+# Global models - we'll load multiple models
+models = {
+    'en': {'model': None, 'tokenizer': None, 'name': 'roberta-base'},
+    'es': {'model': None, 'tokenizer': None, 'name': 'dccuchile/bert-base-spanish-wwm-cased'},
+    'default': {'model': None, 'tokenizer': None, 'name': 'FacebookAI/xlm-roberta-base'}
+}
 
 def load_models():
-    """Load MLM model and tokenizer"""
-    global mlm_model, mlm_tokenizer
+    """Load language-specific models"""
+    global models
     try:
-        logger.info("Loading models...")
+        logger.info("Loading language-specific models...")
         
-        # Load XLM-RoBERTa multilingual model for tokenization and MLM predictions
+        # Load English model (RoBERTa)
         try:
-            logger.info("Loading XLM-RoBERTa multilingual model for tokenization and MLM predictions...")
-            mlm_tokenizer = AutoTokenizer.from_pretrained("FacebookAI/xlm-roberta-base")
-            mlm_model = AutoModelForMaskedLM.from_pretrained("FacebookAI/xlm-roberta-base")
+            logger.info("Loading RoBERTa for English...")
+            models['en']['tokenizer'] = AutoTokenizer.from_pretrained("roberta-base")
+            models['en']['model'] = AutoModelForMaskedLM.from_pretrained("roberta-base")
+            logger.info("✅ RoBERTa English model loaded successfully!")
+        except Exception as e:
+            logger.warning(f"Failed to load RoBERTa: {e}")
+        
+        # Load Spanish model (BETO Cased)
+        try:
+            logger.info("Loading BETO Cased for Spanish...")
+            models['es']['tokenizer'] = AutoTokenizer.from_pretrained("dccuchile/bert-base-spanish-wwm-cased")
+            models['es']['model'] = AutoModelForMaskedLM.from_pretrained("dccuchile/bert-base-spanish-wwm-cased")
+            logger.info("✅ BETO Cased Spanish model loaded successfully!")
+        except Exception as e:
+            logger.warning(f"Failed to load BETO Cased: {e}")
+        
+        # Load default multilingual model (XLM-RoBERTa)
+        try:
+            logger.info("Loading XLM-RoBERTa for other languages...")
+            models['default']['tokenizer'] = AutoTokenizer.from_pretrained("FacebookAI/xlm-roberta-base")
+            models['default']['model'] = AutoModelForMaskedLM.from_pretrained("FacebookAI/xlm-roberta-base")
             logger.info("✅ XLM-RoBERTa multilingual model loaded successfully!")
         except Exception as e:
             logger.warning(f"Failed to load XLM-RoBERTa: {e}")
-            # Fallback to multilingual BERT
-            try:
-                logger.info("Falling back to Multilingual BERT Cased...")
-                mlm_tokenizer = AutoTokenizer.from_pretrained("bert-base-multilingual-cased")
-                mlm_model = AutoModelForMaskedLM.from_pretrained("bert-base-multilingual-cased")
-                logger.info("✅ Multilingual BERT Cased model loaded successfully!")
-            except Exception as e2:
-                logger.error(f"Failed to load Multilingual BERT: {e2}")
-                return False
         
-        logger.info(f"Final setup:")
-        logger.info(f"  Model: {mlm_model.config.name_or_path}")
-        logger.info(f"  Tokenizer: {mlm_tokenizer.name_or_path}")
-        logger.info(f"  Vocabulary size: {mlm_tokenizer.vocab_size}")
+        # Check if at least one model loaded
+        loaded_models = [lang for lang, data in models.items() if data['model'] is not None]
+        if not loaded_models:
+            logger.error("No models loaded successfully!")
+            return False
+        
+        logger.info(f"Final setup - Loaded models: {loaded_models}")
+        for lang in loaded_models:
+            logger.info(f"  {lang}: {models[lang]['name']} (vocab: {models[lang]['tokenizer'].vocab_size})")
         
         return True
         
     except Exception as e:
         logger.error(f"Error loading models: {e}")
         return False
+
+def detect_language(text):
+    """Detect language of the text"""
+    try:
+        # Clean text for better detection (remove very short texts)
+        clean_text = text.strip()
+        if len(clean_text) < 3:
+            return 'default'
+        
+        # Detect language
+        lang = detect(clean_text)
+        
+        # Map detected language to our supported models
+        if lang == 'en':
+            return 'en'
+        elif lang == 'es':
+            return 'es'
+        else:
+            return 'default'
+            
+    except LangDetectException:
+        logger.warning(f"Language detection failed for text: '{text[:50]}...'")
+        return 'default'
+    except Exception as e:
+        logger.warning(f"Language detection error: {e}")
+        return 'default'
+
+def get_model_for_text(text):
+    """Get the appropriate model and tokenizer for the given text"""
+    lang = detect_language(text)
+    
+    # Check if the language-specific model is available
+    if models[lang]['model'] is not None:
+        logger.info(f"Using {lang} model ({models[lang]['name']}) for text: '{text[:30]}...'")
+        return models[lang]['model'], models[lang]['tokenizer'], lang
+    
+    # Fallback to default model
+    if models['default']['model'] is not None:
+        logger.info(f"Using default model ({models['default']['name']}) for text: '{text[:30]}...'")
+        return models['default']['model'], models['default']['tokenizer'], 'default'
+    
+    # If no models available, raise error
+    raise Exception("No models available")
 
 @app.route('/')
 def index():
@@ -67,14 +128,13 @@ def index():
 @app.route('/health')
 def health():
     """Health check endpoint"""
+    loaded_models = {lang: data['model'] is not None for lang, data in models.items()}
+    
     return jsonify({
         "status": "healthy",
-        "mlm_model_loaded": mlm_model is not None,
-        "mlm_tokenizer_loaded": mlm_tokenizer is not None,
-        "model_name": mlm_model.config.name_or_path if mlm_model else None,
-        "tokenizer_name": mlm_tokenizer.name_or_path if mlm_tokenizer else None,
-        "case_sensitive": not getattr(mlm_tokenizer, 'do_lower_case', True) if mlm_tokenizer else None,
-        "multilingual": mlm_tokenizer and 'multilingual' in mlm_tokenizer.name_or_path.lower() if mlm_tokenizer else None
+        "models_loaded": loaded_models,
+        "available_languages": list(loaded_models.keys()),
+        "model_names": {lang: data['name'] for lang, data in models.items() if data['model'] is not None}
     })
 
 @app.route('/tokenize_display', methods=['POST'])
@@ -86,6 +146,9 @@ def tokenize_display():
         
         if not text:
             return jsonify({"error": "No text provided"}), 400
+        
+        # Get appropriate model for this text
+        mlm_model, mlm_tokenizer, detected_lang = get_model_for_text(text)
         
         # Use the MLM tokenizer for consistent tokenization
         tokens = mlm_tokenizer.tokenize(text)
@@ -138,7 +201,9 @@ def tokenize_display():
             "token_count": len(token_positions),
             "token_positions": token_positions,
             "original_tokens": tokens,
-            "word_level": False
+            "word_level": False,
+            "detected_language": detected_lang,
+            "model_used": models[detected_lang]['name']
         })
         
     except Exception as e:
@@ -149,11 +214,6 @@ def tokenize_display():
 def predict_tokens():
     """Predict tokens at masked positions"""
     try:
-        # Check if MLM model is loaded
-        if not mlm_model or not mlm_tokenizer:
-            logger.error("MLM model or tokenizer not loaded")
-            return jsonify({"error": "MLM model not loaded"}), 500
-        
         data = request.get_json()
         text = data.get('text', '')
         masked_positions = data.get('masked_positions', [])
@@ -161,7 +221,10 @@ def predict_tokens():
         if not text:
             return jsonify({"error": "No text provided"}), 400
         
-        logger.info(f"Predicting tokens for text: '{text[:50]}...' at positions: {masked_positions}")
+        # Get appropriate model for this text (same as tokenize_display)
+        mlm_model, mlm_tokenizer, detected_lang = get_model_for_text(text)
+        
+        logger.info(f"Predicting tokens for text: '{text[:50]}...' at positions: {masked_positions} using {detected_lang} model")
         
         # Use the MLM tokenizer for consistent tokenization
         tokens = mlm_tokenizer.tokenize(text)
@@ -240,7 +303,9 @@ def predict_tokens():
             "success": True,
             "text": text,
             "original_tokens": tokens,
-            "predictions": results
+            "predictions": results,
+            "detected_language": detected_lang,
+            "model_used": models[detected_lang]['name']
         })
         
     except Exception as e:
