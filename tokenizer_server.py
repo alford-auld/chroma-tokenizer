@@ -9,7 +9,7 @@ import json
 import logging
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
-from transformers import AutoTokenizer, AutoModelForMaskedLM, AutoModel
+from transformers import AutoTokenizer, AutoModelForMaskedLM
 import torch
 import torch.nn.functional as F
 
@@ -24,11 +24,10 @@ CORS(app)  # Enable CORS for Chrome extension
 tokenizer = None
 mlm_model = None
 mlm_tokenizer = None
-embedding_model = None
 
 def load_models():
-    """Load tokenizer, MLM model, and embedding model"""
-    global tokenizer, mlm_model, mlm_tokenizer, embedding_model
+    """Load tokenizer and MLM model"""
+    global tokenizer, mlm_model, mlm_tokenizer
     try:
         logger.info("Loading models...")
         
@@ -81,23 +80,10 @@ def load_models():
             logger.info("Using RoBERTa tokenizer for all tasks")
             tokenizer = mlm_tokenizer
         
-        # Try to load Jina embedding model
-        if jina_loaded:
-            try:
-                embedding_model = AutoModel.from_pretrained(
-                    "jinaai/jina-embeddings-v4",
-                    trust_remote_code=True,
-                    torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32
-                )
-                logger.info("✅ Jina embedding model loaded successfully!")
-            except Exception as e:
-                logger.warning(f"Failed to load Jina embedding model: {e}")
-        
         logger.info(f"Final setup:")
         logger.info(f"  Tokenizer: {tokenizer.name_or_path}")
         logger.info(f"  MLM Model: {mlm_model.config.name_or_path}")
         logger.info(f"  MLM Tokenizer: {mlm_tokenizer.name_or_path}")
-        logger.info(f"  Embedding Model: {embedding_model.name_or_path if embedding_model else 'None'}")
         logger.info(f"  Vocabulary size: {tokenizer.vocab_size}")
         logger.info(f"  MLM Vocabulary size: {mlm_tokenizer.vocab_size}")
         
@@ -120,7 +106,6 @@ def health():
         "tokenizer_loaded": tokenizer is not None,
         "mlm_model_loaded": mlm_model is not None,
         "mlm_tokenizer_loaded": mlm_tokenizer is not None,
-        "embedding_model_loaded": embedding_model is not None,
         "model_name": tokenizer.name_or_path if tokenizer else None,
         "mlm_model_name": mlm_model.config.name_or_path if mlm_model else None,
         "case_sensitive": not getattr(tokenizer, 'do_lower_case', True) if tokenizer else None,
@@ -398,51 +383,6 @@ def predict_context():
         logger.error(f"Error predicting context: {e}")
         return jsonify({"error": str(e)}), 500
 
-@app.route('/embed_text', methods=['POST'])
-def embed_text():
-    """Generate embeddings for text using Jina model"""
-    try:
-        data = request.get_json()
-        texts = data.get('texts', [])
-        task = data.get('task', 'text-matching')
-        
-        if not texts:
-            return jsonify({"error": "No texts provided"}), 400
-        
-        if not embedding_model or not tokenizer:
-            return jsonify({"error": "Embedding model not loaded"}), 500
-        
-        # Generate embeddings using Jina model
-        if hasattr(embedding_model, 'encode_text'):
-            # Jina model with encode_text method
-            embeddings = embedding_model.encode_text(
-                texts=texts,
-                task=task,
-                batch_size=32
-            )
-        else:
-            # Fallback to standard transformer approach
-            inputs = tokenizer(texts, return_tensors="pt", padding=True, truncation=True)
-            
-            if torch.cuda.is_available():
-                inputs = {k: v.cuda() for k, v in inputs.items()}
-                embedding_model.cuda()
-            
-            with torch.no_grad():
-                outputs = embedding_model(**inputs)
-                embeddings = outputs.last_hidden_state.mean(dim=1).cpu().numpy()
-        
-        return jsonify({
-            "success": True,
-            "embeddings": embeddings.tolist(),
-            "dimension": embeddings.shape[1] if len(embeddings.shape) > 1 else len(embeddings),
-            "task": task
-        })
-        
-    except Exception as e:
-        logger.error(f"Error generating embeddings: {e}")
-        return jsonify({"error": str(e)}), 500
-
 @app.route('/test')
 def test():
     """Test endpoint with sample text"""
@@ -583,7 +523,6 @@ if __name__ == '__main__':
         logger.info("  - Display tokenize: http://localhost:5001/tokenize_display")
         logger.info("  - Predict tokens: http://localhost:5001/predict_tokens")
         logger.info("  - Predict context: http://localhost:5001/predict_context")
-        logger.info("  - Embed text: http://localhost:5001/embed_text")
         logger.info("  - Test MLM: http://localhost:5001/test_mlm")
         app.run(host='0.0.0.0', port=5001, debug=True)
     else:
