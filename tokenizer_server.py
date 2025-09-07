@@ -2,7 +2,7 @@
 """
 Local tokenizer server for Chrome extension
 Provides tokenization services and masked language modeling using transformers
-Hybrid approach: Jina for multilingual tokenization, RoBERTa for MLM predictions
+Uses XLM-RoBERTa multilingual model for both tokenization and MLM predictions
 """
 
 import json
@@ -21,71 +21,37 @@ app = Flask(__name__)
 CORS(app)  # Enable CORS for Chrome extension
 
 # Global models
-tokenizer = None
 mlm_model = None
 mlm_tokenizer = None
 
 def load_models():
-    """Load tokenizer and MLM model"""
-    global tokenizer, mlm_model, mlm_tokenizer
+    """Load MLM model and tokenizer"""
+    global mlm_model, mlm_tokenizer
     try:
         logger.info("Loading models...")
         
-        # Try to load Jina for multilingual tokenization
-        jina_loaded = False
+        # Load XLM-RoBERTa multilingual model for tokenization and MLM predictions
         try:
-            logger.info("Trying to load Jina Embeddings v4...")
-            tokenizer = AutoTokenizer.from_pretrained("jinaai/jina-embeddings-v4", trust_remote_code=True)
-            logger.info("✅ Jina tokenizer loaded successfully!")
-            jina_loaded = True
+            logger.info("Loading XLM-RoBERTa multilingual model for tokenization and MLM predictions...")
+            mlm_tokenizer = AutoTokenizer.from_pretrained("FacebookAI/xlm-roberta-base")
+            mlm_model = AutoModelForMaskedLM.from_pretrained("FacebookAI/xlm-roberta-base")
+            logger.info("✅ XLM-RoBERTa multilingual model loaded successfully!")
         except Exception as e:
-            logger.warning(f"Failed to load Jina tokenizer: {e}")
-        
-        # Load Spanish-optimized CASED model for MLM predictions
-        try:
-            logger.info("Loading BETO Cased (Spanish BERT) for MLM predictions...")
-            mlm_tokenizer = AutoTokenizer.from_pretrained("dccuchile/bert-base-spanish-wwm-cased")
-            mlm_model = AutoModelForMaskedLM.from_pretrained("dccuchile/bert-base-spanish-wwm-cased")
-            logger.info("✅ BETO Cased Spanish MLM model loaded successfully!")
-        except Exception as e:
-            logger.warning(f"Failed to load BETO Cased: {e}")
-            # Fallback to BERTIN RoBERTa
+            logger.warning(f"Failed to load XLM-RoBERTa: {e}")
+            # Fallback to multilingual BERT
             try:
-                logger.info("Falling back to BERTIN RoBERTa Spanish...")
-                mlm_tokenizer = AutoTokenizer.from_pretrained("bertin-project/bertin-roberta-base-spanish")
-                mlm_model = AutoModelForMaskedLM.from_pretrained("bertin-project/bertin-roberta-base-spanish")
-                logger.info("✅ BERTIN RoBERTa Spanish MLM model loaded successfully!")
+                logger.info("Falling back to Multilingual BERT Cased...")
+                mlm_tokenizer = AutoTokenizer.from_pretrained("bert-base-multilingual-cased")
+                mlm_model = AutoModelForMaskedLM.from_pretrained("bert-base-multilingual-cased")
+                logger.info("✅ Multilingual BERT Cased model loaded successfully!")
             except Exception as e2:
-                logger.warning(f"Failed to load BERTIN: {e2}")
-                # Fallback to original BETO uncased
-                try:
-                    logger.info("Falling back to BETO Uncased...")
-                    mlm_tokenizer = AutoTokenizer.from_pretrained("dccuchile/bert-base-spanish-wwm-uncased")
-                    mlm_model = AutoModelForMaskedLM.from_pretrained("dccuchile/bert-base-spanish-wwm-uncased")
-                    logger.info("✅ BETO Uncased Spanish MLM model loaded successfully!")
-                except Exception as e3:
-                    logger.warning(f"Failed to load BETO Uncased: {e3}")
-                    # Final fallback to multilingual BERT
-                    try:
-                        logger.info("Falling back to Multilingual BERT Cased...")
-                        mlm_tokenizer = AutoTokenizer.from_pretrained("bert-base-multilingual-cased")
-                        mlm_model = AutoModelForMaskedLM.from_pretrained("bert-base-multilingual-cased")
-                        logger.info("✅ Multilingual BERT Cased MLM model loaded successfully!")
-                    except Exception as e4:
-                        logger.error(f"Failed to load Multilingual BERT: {e4}")
-                        return False
-        
-        # If Jina failed, use RoBERTa tokenizer for everything
-        if not jina_loaded:
-            logger.info("Using RoBERTa tokenizer for all tasks")
-            tokenizer = mlm_tokenizer
+                logger.error(f"Failed to load Multilingual BERT: {e2}")
+                return False
         
         logger.info(f"Final setup:")
-        logger.info(f"  Tokenizer: {tokenizer.name_or_path}")
-        logger.info(f"  MLM Model: {mlm_model.config.name_or_path}")
-        logger.info(f"  MLM Tokenizer: {mlm_tokenizer.name_or_path}")
-        logger.info(f"  Vocabulary size: {tokenizer.vocab_size}")
-        logger.info(f"  MLM Vocabulary size: {mlm_tokenizer.vocab_size}")
+        logger.info(f"  Model: {mlm_model.config.name_or_path}")
+        logger.info(f"  Tokenizer: {mlm_tokenizer.name_or_path}")
+        logger.info(f"  Vocabulary size: {mlm_tokenizer.vocab_size}")
         
         return True
         
@@ -103,13 +69,12 @@ def health():
     """Health check endpoint"""
     return jsonify({
         "status": "healthy",
-        "tokenizer_loaded": tokenizer is not None,
         "mlm_model_loaded": mlm_model is not None,
         "mlm_tokenizer_loaded": mlm_tokenizer is not None,
-        "model_name": tokenizer.name_or_path if tokenizer else None,
-        "mlm_model_name": mlm_model.config.name_or_path if mlm_model else None,
-        "case_sensitive": not getattr(tokenizer, 'do_lower_case', True) if tokenizer else None,
-        "multilingual": hasattr(tokenizer, 'lang_code_to_id') or (tokenizer and 'multilingual' in tokenizer.name_or_path.lower()) if tokenizer else None
+        "model_name": mlm_model.config.name_or_path if mlm_model else None,
+        "tokenizer_name": mlm_tokenizer.name_or_path if mlm_tokenizer else None,
+        "case_sensitive": not getattr(mlm_tokenizer, 'do_lower_case', True) if mlm_tokenizer else None,
+        "multilingual": mlm_tokenizer and 'multilingual' in mlm_tokenizer.name_or_path.lower() if mlm_tokenizer else None
     })
 
 @app.route('/tokenize_display', methods=['POST'])
@@ -139,7 +104,7 @@ def tokenize_display():
                 clean_token = token[2:]  # Remove ##
                 is_subword = True
             elif token.startswith('Ġ'):  # RoBERTa format
-                clean_token = token[1:]  # Remove Ġ
+                clean_token = ' ' + token[1:]  # Replace Ġ with space
                 is_subword = False
             elif token.startswith('▁'):  # SentencePiece format
                 clean_token = token[1:]  # Remove ▁
@@ -150,26 +115,7 @@ def tokenize_display():
             
             # Find this token in the reconstructed text
             if clean_token:
-                # For RoBERTa tokens with Ġ, we need to handle spaces properly
-                if token.startswith('Ġ') and i > 0:
-                    # Look for the token with space prefix
-                    search_text = ' ' + clean_token
-                    start_pos = reconstructed.find(search_text, current_pos)
-                    if start_pos != -1:
-                        end_pos = start_pos + len(search_text)
-                        token_positions.append({
-                            'token': clean_token,
-                            'token_id': token_ids[i],
-                            'start': start_pos + 1,  # Skip the space
-                            'end': end_pos,
-                            'original_token': token,
-                            'is_subword': is_subword,
-                            'has_space_prefix': True
-                        })
-                        current_pos = end_pos
-                        continue
-                
-                # Regular token search
+                # Simple token search - no special space handling needed
                 start_pos = reconstructed.find(clean_token, current_pos)
                 if start_pos != -1:
                     end_pos = start_pos + len(clean_token)
@@ -301,93 +247,11 @@ def predict_tokens():
         logger.error(f"Prediction error: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
-@app.route('/predict_context', methods=['POST'])
-def predict_context():
-    """Predict tokens with sentence-level context using RoBERTa"""
-    try:
-        data = request.get_json()
-        text = data.get('text', '')
-        masked_positions = data.get('masked_positions', [])
-        
-        if not text:
-            return jsonify({"error": "No text provided"}), 400
-        
-        if not mlm_model or not mlm_tokenizer:
-            return jsonify({"error": "MLM model not loaded"}), 500
-        
-        # Add special tokens for better context
-        if not text.startswith(mlm_tokenizer.cls_token):
-            text = mlm_tokenizer.cls_token + " " + text
-        if not text.endswith(mlm_tokenizer.sep_token):
-            text = text + " " + mlm_tokenizer.sep_token
-        
-        # Tokenize with special tokens
-        tokens = mlm_tokenizer.tokenize(text)
-        
-        # Adjust positions for special tokens
-        adjusted_positions = [pos + 1 for pos in masked_positions]  # +1 for [CLS]
-        
-        # Mask the tokens
-        masked_tokens = tokens.copy()
-        for pos in adjusted_positions:
-            if 0 <= pos < len(masked_tokens):
-                masked_tokens[pos] = mlm_tokenizer.mask_token
-        
-        # Convert back to text
-        masked_text = mlm_tokenizer.convert_tokens_to_string(masked_tokens)
-        
-        # Get predictions
-        inputs = mlm_tokenizer(masked_text, return_tensors="pt", padding=True, truncation=True)
-        
-        # Move to GPU if available
-        if torch.cuda.is_available():
-            inputs = {k: v.cuda() for k, v in inputs.items()}
-            mlm_model.cuda()
-        
-        with torch.no_grad():
-            outputs = mlm_model(**inputs)
-            predictions = F.softmax(outputs.logits, dim=-1)
-        
-        # Extract results
-        results = []
-        for i, pos in enumerate(adjusted_positions):
-            if 0 <= pos < len(tokens):
-                top_predictions = torch.topk(predictions[0, pos], 3)
-                
-                predictions_list = []
-                for j in range(3):
-                    token_id = top_predictions.indices[j].item()
-                    probability = top_predictions.values[j].item()
-                    token_text = mlm_tokenizer.decode([token_id])
-                    
-                    predictions_list.append({
-                        'token': token_text,
-                        'probability': probability,
-                        'token_id': token_id
-                    })
-                
-                results.append({
-                    'position': masked_positions[i],  # Original position
-                    'original_token': tokens[pos],
-                    'predictions': predictions_list
-                })
-        
-        return jsonify({
-            "success": True,
-            "text": text,
-            "masked_text": masked_text,
-            "predictions": results
-        })
-        
-    except Exception as e:
-        logger.error(f"Error predicting context: {e}")
-        return jsonify({"error": str(e)}), 500
-
 @app.route('/test')
 def test():
     """Test endpoint with sample text"""
     test_text = "Click the extension icon in your toolbar"
-    return tokenize_display_text(test_text)
+    return jsonify(tokenize_display_text(test_text))
 
 @app.route('/test_mlm')
 def test_mlm():
@@ -398,16 +262,16 @@ def test_mlm():
     test_text = "Click the extension icon in your toolbar"
     test_positions = [0]  # Position of first word
     
-    return predict_tokens_for_test(test_text, test_positions)
+    return jsonify(predict_tokens_for_test(test_text, test_positions))
 
 def tokenize_display_text(text):
     """Helper function for display tokenization"""
-    if not tokenizer:
+    if not mlm_tokenizer:
         return {"error": "Tokenizer not loaded"}
     
     # Get real tokenization
-    token_ids = tokenizer.encode(text, add_special_tokens=False)
-    token_strings = tokenizer.convert_ids_to_tokens(token_ids)
+    token_ids = mlm_tokenizer.encode(text, add_special_tokens=False)
+    token_strings = mlm_tokenizer.convert_ids_to_tokens(token_ids)
     
     # Split into words (including spaces)
     import re
@@ -516,13 +380,12 @@ def predict_tokens_for_test(text, positions):
 if __name__ == '__main__':
     # Load models on startup
     if load_models():
-        logger.info("🚀 Starting hybrid tokenizer server...")
+        logger.info("🚀 Starting tokenizer server...")
         logger.info("Server will be available at: http://localhost:5001")
         logger.info("Endpoints:")
         logger.info("  - Health check: http://localhost:5001/health")
         logger.info("  - Display tokenize: http://localhost:5001/tokenize_display")
         logger.info("  - Predict tokens: http://localhost:5001/predict_tokens")
-        logger.info("  - Predict context: http://localhost:5001/predict_context")
         logger.info("  - Test MLM: http://localhost:5001/test_mlm")
         app.run(host='0.0.0.0', port=5001, debug=True)
     else:

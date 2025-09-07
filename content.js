@@ -5,7 +5,6 @@ class TextTokenColorizer {
     this.isActive = false;
     this.originalTexts = new Map();
     this.tokenPredictor = new TokenPredictor();
-    this.multiTokenSelector = new MultiTokenSelector();
     this.init();
   }
 
@@ -18,9 +17,6 @@ class TextTokenColorizer {
         sendResponse({ active: this.isActive });
       } else if (request.action === 'getStatus') {
         sendResponse({ active: this.isActive });
-      } else if (request.action === 'togglePredictionMode') {
-        this.tokenPredictor.toggleMode();
-        sendResponse({ predictionMode: this.tokenPredictor.isActive });
       }
     });
   }
@@ -31,10 +27,11 @@ class TextTokenColorizer {
       const response = await fetch('http://localhost:5001/health');
       const health = await response.json();
       
-      if (health.tokenizer_loaded) {
+      if (health.mlm_tokenizer_loaded) {
         this.tokenizer = {
           type: 'server',
           model_name: health.model_name,
+          tokenizer_name: health.tokenizer_name,
           mlm_available: health.mlm_model_loaded
         };
         return;
@@ -96,7 +93,6 @@ class TextTokenColorizer {
   deactivate() {
     this.isActive = false;
     this.tokenPredictor.clearAllPopups();
-    this.multiTokenSelector.clearSelection();
     
     const processedElements = document.querySelectorAll('.text-token-processed');
     processedElements.forEach(wrapper => {
@@ -197,38 +193,15 @@ class TextTokenColorizer {
           }
         }
         
-        // Create wrapper and process tokens using native reconstruction
+        // Process tokens using the old method (for non-server tokenizers or fallback)
         const wrapper = document.createElement('span');
         wrapper.className = 'text-token-processed';
 
-        // Use the reconstructed text and token positions
-        const reconstructed = result.reconstructed;
-        const tokenPositions = result.token_positions;
-        
-        let lastPos = 0;
-        tokenPositions.forEach((tokenInfo, index) => {
-          // Add any text before this token
-          if (tokenInfo.start > lastPos) {
-            const textSpan = document.createElement('span');
-            textSpan.textContent = reconstructed.substring(lastPos, tokenInfo.start);
-            textSpan.style.color = 'inherit';
-            wrapper.appendChild(textSpan);
-          }
-          
-          // Add the token span
-          const tokenSpan = this.createTokenSpan(tokenInfo.token, index, tokenInfo.token_id, text);
+        // Create token spans for each token
+        tokenTexts.forEach((tokenText, index) => {
+          const tokenSpan = this.createTokenSpan(tokenText, index, tokenIds[index], text);
           wrapper.appendChild(tokenSpan);
-          
-          lastPos = tokenInfo.end;
         });
-        
-        // Add any remaining text
-        if (lastPos < reconstructed.length) {
-          const textSpan = document.createElement('span');
-          textSpan.textContent = reconstructed.substring(lastPos);
-          textSpan.style.color = 'inherit';
-          wrapper.appendChild(textSpan);
-        }
         
         textNode.parentNode.replaceChild(wrapper, textNode);
         
@@ -355,16 +328,14 @@ class TextTokenColorizer {
     tokenSpan.dataset.context = context;
     tokenSpan.dataset.originalToken = token;
     
-    // Add click event listeners
+    // Add click event listeners - token prediction is now always enabled
     tokenSpan.addEventListener('click', (e) => {
       e.stopPropagation();
       this.handleTokenClick(tokenSpan);
     });
     
     tokenSpan.addEventListener('mouseenter', () => {
-      if (this.tokenPredictor.isActive) {
-        tokenSpan.style.backgroundColor = 'rgba(74, 175, 80, 0.1)';
-      }
+      tokenSpan.style.backgroundColor = 'rgba(74, 175, 80, 0.1)';
     });
     
     tokenSpan.addEventListener('mouseleave', () => {
@@ -377,13 +348,8 @@ class TextTokenColorizer {
   }
 
   handleTokenClick(tokenSpan) {
-    if (this.tokenPredictor.isActive) {
-      // Single token prediction mode
-      this.tokenPredictor.predictToken(tokenSpan);
-    } else {
-      // Multi-token selection mode
-      this.multiTokenSelector.toggleTokenSelection(tokenSpan);
-    }
+    // Always do token prediction on click
+    this.tokenPredictor.predictToken(tokenSpan);
   }
 
   getTokenColor(tokenCount) {
@@ -409,34 +375,10 @@ class TextTokenColorizer {
 // Token Predictor Class
 class TokenPredictor {
   constructor() {
-    this.isActive = false;
     this.activePopups = new Set();
   }
 
-  toggleMode() {
-    this.isActive = !this.isActive;
-    if (!this.isActive) {
-      this.clearAllPopups();
-    }
-    
-    // Update UI indicators
-    const tokens = document.querySelectorAll('.individual-token');
-    tokens.forEach(token => {
-      if (this.isActive) {
-        token.style.cursor = 'pointer';
-        token.title = 'Click to predict alternatives';
-      } else {
-        token.style.cursor = 'default';
-        token.title = '';
-      }
-    });
-    
-    console.log(`Token prediction mode: ${this.isActive ? 'ON' : 'OFF'}`);
-  }
-
   async predictToken(tokenSpan) {
-    if (!this.isActive) return;
-    
     // Clear any existing popups first
     this.clearAllPopups();
     
@@ -659,137 +601,6 @@ class TokenPredictor {
     // Remove all existing error popups
     const existingErrors = document.querySelectorAll('.token-error-popup');
     existingErrors.forEach(error => error.remove());
-  }
-}
-
-// Multi-Token Selector Class
-class MultiTokenSelector {
-  constructor() {
-    this.selectedTokens = [];
-    this.isActive = false;
-  }
-
-  toggleTokenSelection(tokenSpan) {
-    if (this.selectedTokens.includes(tokenSpan)) {
-      this.selectedTokens = this.selectedTokens.filter(t => t !== tokenSpan);
-      tokenSpan.classList.remove('selected');
-      tokenSpan.style.backgroundColor = 'transparent';
-    } else {
-      this.selectedTokens.push(tokenSpan);
-      tokenSpan.classList.add('selected');
-      tokenSpan.style.backgroundColor = 'rgba(33, 150, 243, 0.2)';
-    }
-    
-    if (this.selectedTokens.length > 1) {
-      this.showMultiTokenPrediction();
-    } else {
-      this.clearMultiTokenPopup();
-    }
-  }
-
-  async showMultiTokenPrediction() {
-    if (this.selectedTokens.length < 2) return;
-    
-    const context = this.getContextAroundTokens();
-    const positions = this.selectedTokens.map(t => parseInt(t.dataset.tokenIndex));
-    
-    try {
-      const response = await fetch('http://localhost:5001/predict_context', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          text: context,
-          masked_positions: positions
-        })
-      });
-      
-      if (!response.ok) throw new Error(`Server error: ${response.status}`);
-      
-      const result = await response.json();
-      if (result.success) {
-        this.showMultiTokenPopup(result.predictions);
-      }
-    } catch (error) {
-      console.error('Error predicting multi-tokens:', error);
-    }
-  }
-
-  getContextAroundTokens() {
-    // Get the text content from the wrapper containing selected tokens
-    const wrapper = this.selectedTokens[0].closest('.text-token-processed');
-    return wrapper ? wrapper.textContent : '';
-  }
-
-  showMultiTokenPopup(predictions) {
-    this.clearMultiTokenPopup();
-    
-    const popup = document.createElement('div');
-    popup.className = 'multi-token-prediction-popup';
-    
-    popup.innerHTML = `
-      <div class="prediction-header">
-        <span class="multi-title">Multi-Token Predictions</span>
-        <button class="close-btn">&times;</button>
-      </div>
-      <div class="multi-predictions">
-        ${predictions.map((pred, i) => `
-          <div class="token-prediction-group">
-            <div class="token-position">Position ${pred.position}: "${pred.original_token}"</div>
-            <div class="predictions-list">
-              ${pred.predictions.map((p, j) => `
-                <div class="prediction-item" data-position="${pred.position}" data-token="${p.token}" data-prob="${p.probability}">
-                  <span class="prediction-rank">${j+1}.</span>
-                  <span class="prediction-token">${p.token}</span>
-                  <span class="prediction-prob">${(p.probability * 100).toFixed(1)}%</span>
-                </div>
-              `).join('')}
-            </div>
-          </div>
-        `).join('')}
-      </div>
-    `;
-    
-    // Position popup
-    const firstToken = this.selectedTokens[0];
-    const rect = firstToken.getBoundingClientRect();
-    popup.style.position = 'fixed';
-    popup.style.left = Math.min(rect.left, window.innerWidth - 300) + 'px';
-    popup.style.top = (rect.bottom + 5) + 'px';
-    popup.style.zIndex = '10000';
-    
-    document.body.appendChild(popup);
-    
-    // Add event listeners
-    popup.querySelector('.close-btn').addEventListener('click', () => {
-      this.clearMultiTokenPopup();
-    });
-    
-    popup.querySelectorAll('.prediction-item').forEach(item => {
-      item.addEventListener('click', () => {
-        const position = parseInt(item.dataset.position);
-        const token = item.dataset.token;
-        const tokenSpan = this.selectedTokens.find(t => parseInt(t.dataset.tokenIndex) === position);
-        if (tokenSpan) {
-          colorizer.tokenPredictor.replaceToken(tokenSpan, token);
-        }
-      });
-    });
-  }
-
-  clearMultiTokenPopup() {
-    const existingPopup = document.querySelector('.multi-token-prediction-popup');
-    if (existingPopup) {
-      existingPopup.parentNode.removeChild(existingPopup);
-    }
-  }
-
-  clearSelection() {
-    this.selectedTokens.forEach(token => {
-      token.classList.remove('selected');
-      token.style.backgroundColor = 'transparent';
-    });
-    this.selectedTokens = [];
-    this.clearMultiTokenPopup();
   }
 }
 
