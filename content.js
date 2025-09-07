@@ -435,28 +435,78 @@ class TokenPredictor {
   async predictToken(tokenSpan) {
     if (!this.isActive) return;
     
+    // Clear any existing popups first
+    this.clearAllPopups();
+    
     const context = tokenSpan.dataset.context;
     const tokenIndex = parseInt(tokenSpan.dataset.tokenIndex);
     
     try {
+      console.log('Predicting token:', { context, tokenIndex });
+      
+      // First, get the original tokenization to find the correct position
+      const tokenizeResponse = await fetch('http://localhost:5001/tokenize_display', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: context })
+      });
+      
+      if (!tokenizeResponse.ok) {
+        throw new Error(`Tokenization error: ${tokenizeResponse.status}`);
+      }
+      
+      const tokenizeResult = await tokenizeResponse.json();
+      console.log('Tokenize result:', tokenizeResult);
+      
+      // Find the original token position for this display token
+      let originalPosition = -1;
+      if (tokenizeResult.token_positions && tokenIndex < tokenizeResult.token_positions.length) {
+        const tokenInfo = tokenizeResult.token_positions[tokenIndex];
+        console.log('Token info:', tokenInfo);
+        
+        // Find this token in the original tokenization
+        const originalTokens = tokenizeResult.original_tokens || [];
+        console.log('Original tokens:', originalTokens);
+        
+        for (let i = 0; i < originalTokens.length; i++) {
+          if (originalTokens[i] === tokenInfo.original_token) {
+            originalPosition = i;
+            break;
+          }
+        }
+      }
+      
+      console.log('Original position:', originalPosition);
+      
+      if (originalPosition === -1) {
+        throw new Error('Could not find original token position');
+      }
+      
+      // Now predict using the correct position
       const response = await fetch('http://localhost:5001/predict_tokens', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           text: context,
-          masked_positions: [tokenIndex]
+          masked_positions: [originalPosition]
         })
       });
       
-      if (!response.ok) throw new Error(`Server error: ${response.status}`);
+      if (!response.ok) {
+        throw new Error(`Server error: ${response.status}`);
+      }
       
       const result = await response.json();
+      console.log('Prediction result:', result);
+      
       if (result.success && result.predictions.length > 0) {
         this.showPredictionPopup(tokenSpan, result.predictions[0]);
+      } else {
+        console.warn('No predictions received');
       }
     } catch (error) {
       console.error('Error predicting token:', error);
-      this.showErrorPopup(tokenSpan, 'Prediction failed');
+      this.showErrorPopup(tokenSpan, 'Prediction failed: ' + error.message);
     }
   }
 
@@ -468,56 +518,78 @@ class TokenPredictor {
     popup.className = 'token-prediction-popup';
     popup.dataset.tokenId = tokenSpan.dataset.tokenId;
     
-    const originalToken = prediction.original_token;
-    const predictions = prediction.predictions;
+    // Clean up the original token for display
+    const originalToken = tokenSpan.dataset.originalToken || '';
+    const cleanOriginalToken = originalToken.replace(/Ġ/g, '').replace(/▁/g, '');
+    
+    // Get the original token's probability
+    const originalProbability = prediction.original_probability || 0;
+    
+    // Filter alternatives: probability > 5%, not current token, max 3
+    const filteredPredictions = prediction.predictions
+      .filter(pred => {
+        const cleanPredToken = pred.token.replace(/Ġ/g, '').replace(/▁/g, '');
+        return pred.probability > 0.05 && cleanPredToken !== cleanOriginalToken;
+      })
+      .slice(0, 3); // Limit to 3 alternatives
     
     popup.innerHTML = `
-      <div class="prediction-header">
-        <span class="original-token">"${originalToken}"</span>
-        <button class="close-btn">&times;</button>
+      <div class="popup-header">
+        <span class="popup-title">Token Predictions</span>
+        <button class="close-btn">×</button>
       </div>
-      <div class="prediction-title">Top Predictions:</div>
-      <div class="predictions-list">
-        ${predictions.map((pred, i) => `
-          <div class="prediction-item" data-token="${pred.token}" data-prob="${pred.probability}">
-            <span class="prediction-rank">${i+1}.</span>
-            <span class="prediction-token">${pred.token}</span>
-            <span class="prediction-prob">${(pred.probability * 100).toFixed(1)}%</span>
-          </div>
-        `).join('')}
+      <div class="popup-content">
+        <div class="current-token">
+          <strong>Current:</strong> "${cleanOriginalToken}" <span class="probability">${(originalProbability * 100).toFixed(1)}%</span>
+        </div>
+        <div class="predictions">
+          <strong>Alternatives:</strong>
+          ${filteredPredictions.map((pred, index) => `
+            <div class="prediction-item" data-token="${pred.token}" data-probability="${pred.probability}">
+              <span class="token">${pred.token.replace(/Ġ/g, '').replace(/▁/g, '')}</span>
+              <span class="probability">${(pred.probability * 100).toFixed(1)}%</span>
+            </div>
+          `).join('')}
+        </div>
       </div>
     `;
     
-    // Position popup near clicked token
+    // Better positioning logic
     const rect = tokenSpan.getBoundingClientRect();
+    const popupWidth = 250; // Fixed width
+    const popupHeight = 150; // Estimated height
+    
+    let left = rect.left;
+    let top = rect.bottom + 5;
+    
+    // Adjust horizontal position if popup would go off-screen
+    if (left + popupWidth > window.innerWidth) {
+      left = window.innerWidth - popupWidth - 10;
+    }
+    
+    // Adjust vertical position if popup would go off-screen
+    if (top + popupHeight > window.innerHeight) {
+      top = rect.top - popupHeight - 5;
+    }
+    
     popup.style.position = 'fixed';
-    popup.style.left = Math.min(rect.left, window.innerWidth - 250) + 'px';
-    popup.style.top = (rect.bottom + 5) + 'px';
+    popup.style.left = left + 'px';
+    popup.style.top = top + 'px';
     popup.style.zIndex = '10000';
     
     document.body.appendChild(popup);
-    this.activePopups.add(popup);
     
     // Add event listeners
     popup.querySelector('.close-btn').addEventListener('click', () => {
-      this.removePopup(popup);
+      this.clearPopupForToken(tokenSpan);
     });
     
     popup.querySelectorAll('.prediction-item').forEach(item => {
       item.addEventListener('click', () => {
-        this.replaceToken(tokenSpan, item.dataset.token);
-        this.removePopup(popup);
+        const token = item.dataset.token;
+        this.replaceToken(tokenSpan, token);
       });
     });
-    
-    // Close popup when clicking outside
-    setTimeout(() => {
-      document.addEventListener('click', (e) => {
-        if (!popup.contains(e.target) && e.target !== tokenSpan) {
-          this.removePopup(popup);
-        }
-      }, { once: true });
-    }, 100);
   }
 
   showErrorPopup(tokenSpan, message) {
@@ -578,8 +650,13 @@ class TokenPredictor {
   }
 
   clearAllPopups() {
-    this.activePopups.forEach(popup => this.removePopup(popup));
-    this.activePopups.clear();
+    // Remove all existing prediction popups
+    const existingPopups = document.querySelectorAll('.token-prediction-popup');
+    existingPopups.forEach(popup => popup.remove());
+    
+    // Remove all existing error popups
+    const existingErrors = document.querySelectorAll('.token-error-popup');
+    existingErrors.forEach(error => error.remove());
   }
 }
 

@@ -113,7 +113,7 @@ def health():
 
 @app.route('/tokenize_display', methods=['POST'])
 def tokenize_display():
-    """Tokenization optimized for display - uses real model tokens"""
+    """Tokenization optimized for display - uses MLM tokenizer for consistency"""
     try:
         data = request.get_json()
         text = data.get('text', '')
@@ -121,12 +121,12 @@ def tokenize_display():
         if not text:
             return jsonify({"error": "No text provided"}), 400
         
-        # Use the real tokenizer for consistent tokenization
-        tokens = tokenizer.tokenize(text)
-        token_ids = tokenizer.convert_tokens_to_ids(tokens)
+        # Use the MLM tokenizer for consistent tokenization
+        tokens = mlm_tokenizer.tokenize(text)
+        token_ids = mlm_tokenizer.convert_tokens_to_ids(tokens)
         
-        # Get the reconstructed text using tokenizer's native method
-        reconstructed = tokenizer.convert_tokens_to_string(tokens)
+        # Get the reconstructed text using MLM tokenizer's native method
+        reconstructed = mlm_tokenizer.convert_tokens_to_string(tokens)
         
         # Create a mapping of tokens to their positions in the reconstructed text
         token_positions = []
@@ -155,6 +155,7 @@ def tokenize_display():
             "match": text.strip() == reconstructed.strip(),
             "token_count": len(token_positions),
             "token_positions": token_positions,
+            "original_tokens": tokens,  # Add this line
             "word_level": False
         })
         
@@ -164,7 +165,7 @@ def tokenize_display():
 
 @app.route('/predict_tokens', methods=['POST'])
 def predict_tokens():
-    """Predict tokens for masked positions using RoBERTa MLM"""
+    """Predict tokens at masked positions"""
     try:
         data = request.get_json()
         text = data.get('text', '')
@@ -173,75 +174,75 @@ def predict_tokens():
         if not text:
             return jsonify({"error": "No text provided"}), 400
         
-        if not mlm_model or not mlm_tokenizer:
-            return jsonify({"error": "MLM model not loaded"}), 500
-        
-        if not masked_positions:
-            return jsonify({"error": "No masked positions provided"}), 400
-        
-        # Tokenize the text using MLM tokenizer
+        # Use the MLM tokenizer for consistent tokenization
         tokens = mlm_tokenizer.tokenize(text)
+        token_ids = mlm_tokenizer.convert_tokens_to_ids(tokens)
         
-        # Mask the tokens at specified positions
-        masked_tokens = tokens.copy()
-        for pos in masked_positions:
+        # Add special tokens for proper MLM prediction
+        # RoBERTa expects <s> at the beginning and </s> at the end
+        tokens_with_special = [mlm_tokenizer.bos_token] + tokens + [mlm_tokenizer.eos_token]
+        token_ids_with_special = [mlm_tokenizer.bos_token_id] + token_ids + [mlm_tokenizer.eos_token_id]
+        
+        # Adjust masked positions to account for the added <s> token
+        adjusted_positions = [pos + 1 for pos in masked_positions]
+        
+        # Create masked input
+        masked_tokens = tokens_with_special.copy()
+        masked_token_ids = token_ids_with_special.copy()
+        
+        for pos in adjusted_positions:
             if 0 <= pos < len(masked_tokens):
                 masked_tokens[pos] = mlm_tokenizer.mask_token
+                masked_token_ids[pos] = mlm_tokenizer.mask_token_id
         
-        # Convert back to text for model input
-        masked_text = mlm_tokenizer.convert_tokens_to_string(masked_tokens)
+        # Convert to tensor and predict
+        input_ids = torch.tensor([masked_token_ids])
         
-        # Prepare input for the model
-        inputs = mlm_tokenizer(masked_text, return_tensors="pt", padding=True, truncation=True)
-        
-        # Move to GPU if available
-        if torch.cuda.is_available():
-            inputs = {k: v.cuda() for k, v in inputs.items()}
-            mlm_model.cuda()
-        
-        # Get predictions
         with torch.no_grad():
-            outputs = mlm_model(**inputs)
-            predictions = F.softmax(outputs.logits, dim=-1)
+            outputs = mlm_model(input_ids)
+            predictions = outputs.logits[0]  # Shape: [seq_len, vocab_size]
         
-        # Get top predictions for each masked position
+        # Get predictions for each masked position
         results = []
         for i, pos in enumerate(masked_positions):
-            if 0 <= pos < len(tokens):
-                # Get predictions for this position (accounting for special tokens)
-                token_pos = pos + 1  # +1 for [CLS] token
-                if token_pos < predictions.shape[1]:
-                    top_predictions = torch.topk(predictions[0, token_pos], 3)
+            adjusted_pos = pos + 1  # Account for <s> token
+            if 0 <= adjusted_pos < len(tokens_with_special):
+                # Get top predictions for this position
+                position_logits = predictions[adjusted_pos]
+                top_indices = torch.topk(position_logits, k=5).indices
+                
+                # Get probability of the original token
+                original_token_id = token_ids[pos]
+                original_probability = torch.softmax(position_logits, dim=0)[original_token_id].item()
+                
+                predictions_list = []
+                for idx in top_indices:
+                    token_id = idx.item()
+                    token_text = mlm_tokenizer.convert_ids_to_tokens([token_id])[0]
+                    probability = torch.softmax(position_logits, dim=0)[idx].item()
                     
-                    predictions_list = []
-                    for j in range(3):
-                        token_id = top_predictions.indices[j].item()
-                        probability = top_predictions.values[j].item()
-                        token_text = mlm_tokenizer.decode([token_id])
-                        
-                        predictions_list.append({
-                            'token': token_text,
-                            'probability': probability,
-                            'token_id': token_id
-                        })
-                    
-                    results.append({
-                        'position': pos,
-                        'original_token': tokens[pos],
-                        'predictions': predictions_list
+                    predictions_list.append({
+                        'token': token_text,
+                        'token_id': token_id,
+                        'probability': probability
                     })
-        
-        logger.info(f"RoBERTa predicted tokens for positions: {masked_positions}")
+                
+                results.append({
+                    'position': pos,
+                    'original_token': tokens[pos],
+                    'original_probability': original_probability,
+                    'predictions': predictions_list
+                })
         
         return jsonify({
             "success": True,
             "text": text,
-            "masked_text": masked_text,
+            "original_tokens": tokens,
             "predictions": results
         })
         
     except Exception as e:
-        logger.error(f"Error predicting tokens: {e}")
+        logger.error(f"Prediction error: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/predict_context', methods=['POST'])
