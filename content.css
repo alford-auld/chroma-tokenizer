@@ -55,3 +55,172 @@ body {
 .low-token-count {
   font-weight: 300;
 }
+
+/* Token prediction popup styles */
+.token-prediction-popup {
+  background: white;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  padding: 12px;
+  min-width: 200px;
+  max-width: 250px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 13px;
+  z-index: 10000;
+}
+
+.token-prediction-popup.error {
+  background: #ffebee;
+  border-color: #f44336;
+}
+
+.prediction-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #eee;
+}
+
+.original-token {
+  font-weight: 600;
+  color: #333;
+  font-style: italic;
+}
+
+.error-message {
+  color: #d32f2f;
+  font-weight: 500;
+}
+
+.close-btn {
+  background: none;
+  border: none;
+  font-size: 18px;
+  cursor: pointer;
+  color: #666;
+  padding: 0;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.close-btn:hover {
+  color: #333;
+}
+
+.prediction-title {
+  font-weight: 600;
+  color: #333;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+
+.predictions-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.prediction-item {
+  display: flex;
+  align-items: center;
+  padding: 6px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background-color 0.2s;
+  gap: 6px;
+}
+
+.prediction-item:hover {
+  background-color: #f5f5f5;
+}
+
+.prediction-rank {
+  font-weight: 600;
+  color: #666;
+  min-width: 20px;
+}
+
+.prediction-token {
+  flex: 1;
+  font-family: 'Courier New', monospace;
+  font-weight: 500;
+  color: #333;
+}
+
+.prediction-prob {
+  font-size: 11px;
+  color: #666;
+  font-weight: 500;
+}
+
+/* Multi-token prediction popup */
+.multi-token-prediction-popup {
+  background: white;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  padding: 12px;
+  min-width: 280px;
+  max-width: 350px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 13px;
+  z-index: 10000;
+}
+
+.multi-title {
+  font-weight: 600;
+  color: #333;
+}
+
+.multi-predictions {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.token-prediction-group {
+  border: 1px solid #eee;
+  border-radius: 6px;
+  padding: 8px;
+}
+
+.token-position {
+  font-weight: 600;
+  color: #1976d2;
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+
+/* Selected token styling */
+.individual-token.selected {
+  background-color: rgba(33, 150, 243, 0.2) !important;
+  border: 1px solid rgba(33, 150, 243, 0.5);
+}
+
+/* Hover effects for prediction mode */
+.individual-token:hover {
+  transition: background-color 0.2s;
+}
+
+/* Animation for popup appearance */
+.token-prediction-popup,
+.multi-token-prediction-popup {
+  animation: popupFadeIn 0.2s ease-out;
+}
+
+@keyframes popupFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

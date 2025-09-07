@@ -1,9 +1,11 @@
-// Content script for text token colorization
+// Content script for text token colorization with MLM predictions
 class TextTokenColorizer {
   constructor() {
     this.tokenizer = null;
     this.isActive = false;
     this.originalTexts = new Map();
+    this.tokenPredictor = new TokenPredictor();
+    this.multiTokenSelector = new MultiTokenSelector();
     this.init();
   }
 
@@ -16,6 +18,9 @@ class TextTokenColorizer {
         sendResponse({ active: this.isActive });
       } else if (request.action === 'getStatus') {
         sendResponse({ active: this.isActive });
+      } else if (request.action === 'togglePredictionMode') {
+        this.tokenPredictor.toggleMode();
+        sendResponse({ predictionMode: this.tokenPredictor.isActive });
       }
     });
   }
@@ -29,7 +34,8 @@ class TextTokenColorizer {
       if (health.tokenizer_loaded) {
         this.tokenizer = {
           type: 'server',
-          model_name: health.model_name
+          model_name: health.model_name,
+          mlm_available: health.mlm_model_loaded
         };
         return;
       }
@@ -89,6 +95,8 @@ class TextTokenColorizer {
 
   deactivate() {
     this.isActive = false;
+    this.tokenPredictor.clearAllPopups();
+    this.multiTokenSelector.clearSelection();
     
     const processedElements = document.querySelectorAll('.text-token-processed');
     processedElements.forEach(wrapper => {
@@ -157,7 +165,8 @@ class TextTokenColorizer {
         let tokenIds, tokenTexts;
         
         if (this.tokenizer.type === 'server') {
-          const response = await fetch('http://localhost:5001/tokenize', {
+          // Use the new display tokenization endpoint for perfect text preservation
+          const response = await fetch('http://localhost:5001/tokenize_display', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ text: text })
@@ -166,6 +175,14 @@ class TextTokenColorizer {
           if (!response.ok) throw new Error(`Server error: ${response.status}`);
           
           const result = await response.json();
+          
+          // Use the new token_positions structure
+          if (result.token_positions) {
+            this.processWithTokenPositions(textNode, result);
+            continue;
+          }
+          
+          // Fallback to old format
           tokenIds = result.token_ids;
           tokenTexts = result.token_texts;
         } else {
@@ -180,31 +197,37 @@ class TextTokenColorizer {
           }
         }
         
+        // Create wrapper and process tokens using native reconstruction
         const wrapper = document.createElement('span');
         wrapper.className = 'text-token-processed';
 
-        for (let i = 0; i < tokenIds.length; i++) {
-          const tokenId = tokenIds[i];
-          let tokenText = tokenTexts[i] || `[token_${tokenId}]`;
-
-          if (tokenText.startsWith(' ')) {
-            const spaceSpan = document.createElement('span');
-            spaceSpan.textContent = ' ';
-            spaceSpan.className = 'token-whitespace';
-            wrapper.appendChild(spaceSpan);
-            tokenText = tokenText.substring(1);
+        // Use the reconstructed text and token positions
+        const reconstructed = result.reconstructed;
+        const tokenPositions = result.token_positions;
+        
+        let lastPos = 0;
+        tokenPositions.forEach((tokenInfo, index) => {
+          // Add any text before this token
+          if (tokenInfo.start > lastPos) {
+            const textSpan = document.createElement('span');
+            textSpan.textContent = reconstructed.substring(lastPos, tokenInfo.start);
+            textSpan.style.color = 'inherit';
+            wrapper.appendChild(textSpan);
           }
-
-          const tokenSpan = this.createTokenSpan(tokenText, i + 1, tokenId);
+          
+          // Add the token span
+          const tokenSpan = this.createTokenSpan(tokenInfo.token, index, tokenInfo.token_id, text);
           wrapper.appendChild(tokenSpan);
-        }
-
-        const trailingWhitespace = text.match(/\s*$/)[0];
-        if (trailingWhitespace) {
-          const spaceSpan = document.createElement('span');
-          spaceSpan.textContent = trailingWhitespace;
-          spaceSpan.className = 'token-whitespace';
-          wrapper.appendChild(spaceSpan);
+          
+          lastPos = tokenInfo.end;
+        });
+        
+        // Add any remaining text
+        if (lastPos < reconstructed.length) {
+          const textSpan = document.createElement('span');
+          textSpan.textContent = reconstructed.substring(lastPos);
+          textSpan.style.color = 'inherit';
+          wrapper.appendChild(textSpan);
         }
         
         textNode.parentNode.replaceChild(wrapper, textNode);
@@ -215,6 +238,45 @@ class TextTokenColorizer {
     }
   }
   
+  processWithTokenPositions(textNode, result) {
+    const text = textNode.textContent;
+    
+    // Create wrapper and process tokens using native reconstruction
+    const wrapper = document.createElement('span');
+    wrapper.className = 'text-token-processed';
+
+    // Use the reconstructed text and token positions
+    const reconstructed = result.reconstructed;
+    const tokenPositions = result.token_positions;
+    
+    let lastPos = 0;
+    tokenPositions.forEach((tokenInfo, index) => {
+      // Add any text before this token
+      if (tokenInfo.start > lastPos) {
+        const textSpan = document.createElement('span');
+        textSpan.textContent = reconstructed.substring(lastPos, tokenInfo.start);
+        textSpan.style.color = 'inherit';
+        wrapper.appendChild(textSpan);
+      }
+      
+      // Add the token span
+      const tokenSpan = this.createTokenSpan(tokenInfo.token, index, tokenInfo.token_id, text);
+      wrapper.appendChild(tokenSpan);
+      
+      lastPos = tokenInfo.end;
+    });
+    
+    // Add any remaining text
+    if (lastPos < reconstructed.length) {
+      const textSpan = document.createElement('span');
+      textSpan.textContent = reconstructed.substring(lastPos);
+      textSpan.style.color = 'inherit';
+      wrapper.appendChild(textSpan);
+    }
+    
+    textNode.parentNode.replaceChild(wrapper, textNode);
+  }
+
   splitTextForSimpleBPE(text) {
     let tokens = [text];
     
@@ -252,7 +314,7 @@ class TextTokenColorizer {
       .filter(token => token.length > 0);
   }
 
-  createTokenSpan(token, tokenIndex, tokenId = null) {
+  createTokenSpan(token, tokenIndex, tokenId = null, context = '') {
     const isDigitOnly = /^\d+$/.test(token);
     let color;
 
@@ -267,15 +329,61 @@ class TextTokenColorizer {
     
     const tokenSpan = document.createElement('span');
     tokenSpan.className = 'individual-token';
-    tokenSpan.textContent = token;
+    
+    // Handle Ġ replacement more intelligently
+    let displayText = token;
+    if (token.startsWith('Ġ')) {
+      // This token starts with a space - keep the space
+      displayText = token.replace(/Ġ/g, ' ');
+    } else {
+      // This token doesn't start with a space - don't add one
+      displayText = token.replace(/Ġ/g, '');
+    }
+    
+    tokenSpan.textContent = displayText;
     tokenSpan.style.color = color;
     tokenSpan.style.backgroundColor = 'transparent';
     tokenSpan.style.padding = '0';
     tokenSpan.style.margin = '0';
     tokenSpan.style.borderRadius = '3px';
     tokenSpan.style.display = 'inline-block';
+    tokenSpan.style.cursor = 'pointer';
+    
+    // Add data attributes for prediction
+    tokenSpan.dataset.tokenIndex = tokenIndex;
+    tokenSpan.dataset.tokenId = tokenId;
+    tokenSpan.dataset.context = context;
+    tokenSpan.dataset.originalToken = token;
+    
+    // Add click event listeners
+    tokenSpan.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.handleTokenClick(tokenSpan);
+    });
+    
+    tokenSpan.addEventListener('mouseenter', () => {
+      if (this.tokenPredictor.isActive) {
+        tokenSpan.style.backgroundColor = 'rgba(74, 175, 80, 0.1)';
+      }
+    });
+    
+    tokenSpan.addEventListener('mouseleave', () => {
+      if (!tokenSpan.classList.contains('selected')) {
+        tokenSpan.style.backgroundColor = 'transparent';
+      }
+    });
     
     return tokenSpan;
+  }
+
+  handleTokenClick(tokenSpan) {
+    if (this.tokenPredictor.isActive) {
+      // Single token prediction mode
+      this.tokenPredictor.predictToken(tokenSpan);
+    } else {
+      // Multi-token selection mode
+      this.multiTokenSelector.toggleTokenSelection(tokenSpan);
+    }
   }
 
   getTokenColor(tokenCount) {
@@ -293,6 +401,316 @@ class TextTokenColorizer {
     const powerNormalized = Math.pow(normalized, 0.7);
     const lightness = 100 - (powerNormalized * 100);
     return `hsl(0, 0%, ${lightness}%)`;
+  }
+}
+
+// Token Predictor Class
+class TokenPredictor {
+  constructor() {
+    this.isActive = false;
+    this.activePopups = new Set();
+  }
+
+  toggleMode() {
+    this.isActive = !this.isActive;
+    if (!this.isActive) {
+      this.clearAllPopups();
+    }
+    
+    // Update UI indicators
+    const tokens = document.querySelectorAll('.individual-token');
+    tokens.forEach(token => {
+      if (this.isActive) {
+        token.style.cursor = 'pointer';
+        token.title = 'Click to predict alternatives';
+      } else {
+        token.style.cursor = 'default';
+        token.title = '';
+      }
+    });
+    
+    console.log(`Token prediction mode: ${this.isActive ? 'ON' : 'OFF'}`);
+  }
+
+  async predictToken(tokenSpan) {
+    if (!this.isActive) return;
+    
+    const context = tokenSpan.dataset.context;
+    const tokenIndex = parseInt(tokenSpan.dataset.tokenIndex);
+    
+    try {
+      const response = await fetch('http://localhost:5001/predict_tokens', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text: context,
+          masked_positions: [tokenIndex]
+        })
+      });
+      
+      if (!response.ok) throw new Error(`Server error: ${response.status}`);
+      
+      const result = await response.json();
+      if (result.success && result.predictions.length > 0) {
+        this.showPredictionPopup(tokenSpan, result.predictions[0]);
+      }
+    } catch (error) {
+      console.error('Error predicting token:', error);
+      this.showErrorPopup(tokenSpan, 'Prediction failed');
+    }
+  }
+
+  showPredictionPopup(tokenSpan, prediction) {
+    // Remove any existing popup for this token
+    this.clearPopupForToken(tokenSpan);
+    
+    const popup = document.createElement('div');
+    popup.className = 'token-prediction-popup';
+    popup.dataset.tokenId = tokenSpan.dataset.tokenId;
+    
+    const originalToken = prediction.original_token;
+    const predictions = prediction.predictions;
+    
+    popup.innerHTML = `
+      <div class="prediction-header">
+        <span class="original-token">"${originalToken}"</span>
+        <button class="close-btn">&times;</button>
+      </div>
+      <div class="prediction-title">Top Predictions:</div>
+      <div class="predictions-list">
+        ${predictions.map((pred, i) => `
+          <div class="prediction-item" data-token="${pred.token}" data-prob="${pred.probability}">
+            <span class="prediction-rank">${i+1}.</span>
+            <span class="prediction-token">${pred.token}</span>
+            <span class="prediction-prob">${(pred.probability * 100).toFixed(1)}%</span>
+          </div>
+        `).join('')}
+      </div>
+    `;
+    
+    // Position popup near clicked token
+    const rect = tokenSpan.getBoundingClientRect();
+    popup.style.position = 'fixed';
+    popup.style.left = Math.min(rect.left, window.innerWidth - 250) + 'px';
+    popup.style.top = (rect.bottom + 5) + 'px';
+    popup.style.zIndex = '10000';
+    
+    document.body.appendChild(popup);
+    this.activePopups.add(popup);
+    
+    // Add event listeners
+    popup.querySelector('.close-btn').addEventListener('click', () => {
+      this.removePopup(popup);
+    });
+    
+    popup.querySelectorAll('.prediction-item').forEach(item => {
+      item.addEventListener('click', () => {
+        this.replaceToken(tokenSpan, item.dataset.token);
+        this.removePopup(popup);
+      });
+    });
+    
+    // Close popup when clicking outside
+    setTimeout(() => {
+      document.addEventListener('click', (e) => {
+        if (!popup.contains(e.target) && e.target !== tokenSpan) {
+          this.removePopup(popup);
+        }
+      }, { once: true });
+    }, 100);
+  }
+
+  showErrorPopup(tokenSpan, message) {
+    const popup = document.createElement('div');
+    popup.className = 'token-prediction-popup error';
+    popup.innerHTML = `
+      <div class="prediction-header">
+        <span class="error-message">${message}</span>
+        <button class="close-btn">&times;</button>
+      </div>
+    `;
+    
+    const rect = tokenSpan.getBoundingClientRect();
+    popup.style.position = 'fixed';
+    popup.style.left = rect.left + 'px';
+    popup.style.top = (rect.bottom + 5) + 'px';
+    popup.style.zIndex = '10000';
+    
+    document.body.appendChild(popup);
+    this.activePopups.add(popup);
+    
+    popup.querySelector('.close-btn').addEventListener('click', () => {
+      this.removePopup(popup);
+    });
+    
+    setTimeout(() => this.removePopup(popup), 3000);
+  }
+
+  replaceToken(tokenSpan, newToken) {
+    tokenSpan.textContent = newToken;
+    tokenSpan.dataset.originalToken = newToken;
+    
+    // Update the context in the wrapper
+    const wrapper = tokenSpan.closest('.text-token-processed');
+    if (wrapper) {
+      const originalTextNode = Array.from(colorizer.originalTexts.keys()).find(node => 
+        wrapper.parentNode === node.parentNode
+      );
+      if (originalTextNode) {
+        const newContext = wrapper.textContent;
+        colorizer.originalTexts.set(originalTextNode, newContext);
+      }
+    }
+  }
+
+  removePopup(popup) {
+    if (popup && popup.parentNode) {
+      popup.parentNode.removeChild(popup);
+      this.activePopups.delete(popup);
+    }
+  }
+
+  clearPopupForToken(tokenSpan) {
+    const existingPopup = document.querySelector(`.token-prediction-popup[data-token-id="${tokenSpan.dataset.tokenId}"]`);
+    if (existingPopup) {
+      this.removePopup(existingPopup);
+    }
+  }
+
+  clearAllPopups() {
+    this.activePopups.forEach(popup => this.removePopup(popup));
+    this.activePopups.clear();
+  }
+}
+
+// Multi-Token Selector Class
+class MultiTokenSelector {
+  constructor() {
+    this.selectedTokens = [];
+    this.isActive = false;
+  }
+
+  toggleTokenSelection(tokenSpan) {
+    if (this.selectedTokens.includes(tokenSpan)) {
+      this.selectedTokens = this.selectedTokens.filter(t => t !== tokenSpan);
+      tokenSpan.classList.remove('selected');
+      tokenSpan.style.backgroundColor = 'transparent';
+    } else {
+      this.selectedTokens.push(tokenSpan);
+      tokenSpan.classList.add('selected');
+      tokenSpan.style.backgroundColor = 'rgba(33, 150, 243, 0.2)';
+    }
+    
+    if (this.selectedTokens.length > 1) {
+      this.showMultiTokenPrediction();
+    } else {
+      this.clearMultiTokenPopup();
+    }
+  }
+
+  async showMultiTokenPrediction() {
+    if (this.selectedTokens.length < 2) return;
+    
+    const context = this.getContextAroundTokens();
+    const positions = this.selectedTokens.map(t => parseInt(t.dataset.tokenIndex));
+    
+    try {
+      const response = await fetch('http://localhost:5001/predict_context', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text: context,
+          masked_positions: positions
+        })
+      });
+      
+      if (!response.ok) throw new Error(`Server error: ${response.status}`);
+      
+      const result = await response.json();
+      if (result.success) {
+        this.showMultiTokenPopup(result.predictions);
+      }
+    } catch (error) {
+      console.error('Error predicting multi-tokens:', error);
+    }
+  }
+
+  getContextAroundTokens() {
+    // Get the text content from the wrapper containing selected tokens
+    const wrapper = this.selectedTokens[0].closest('.text-token-processed');
+    return wrapper ? wrapper.textContent : '';
+  }
+
+  showMultiTokenPopup(predictions) {
+    this.clearMultiTokenPopup();
+    
+    const popup = document.createElement('div');
+    popup.className = 'multi-token-prediction-popup';
+    
+    popup.innerHTML = `
+      <div class="prediction-header">
+        <span class="multi-title">Multi-Token Predictions</span>
+        <button class="close-btn">&times;</button>
+      </div>
+      <div class="multi-predictions">
+        ${predictions.map((pred, i) => `
+          <div class="token-prediction-group">
+            <div class="token-position">Position ${pred.position}: "${pred.original_token}"</div>
+            <div class="predictions-list">
+              ${pred.predictions.map((p, j) => `
+                <div class="prediction-item" data-position="${pred.position}" data-token="${p.token}" data-prob="${p.probability}">
+                  <span class="prediction-rank">${j+1}.</span>
+                  <span class="prediction-token">${p.token}</span>
+                  <span class="prediction-prob">${(p.probability * 100).toFixed(1)}%</span>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    `;
+    
+    // Position popup
+    const firstToken = this.selectedTokens[0];
+    const rect = firstToken.getBoundingClientRect();
+    popup.style.position = 'fixed';
+    popup.style.left = Math.min(rect.left, window.innerWidth - 300) + 'px';
+    popup.style.top = (rect.bottom + 5) + 'px';
+    popup.style.zIndex = '10000';
+    
+    document.body.appendChild(popup);
+    
+    // Add event listeners
+    popup.querySelector('.close-btn').addEventListener('click', () => {
+      this.clearMultiTokenPopup();
+    });
+    
+    popup.querySelectorAll('.prediction-item').forEach(item => {
+      item.addEventListener('click', () => {
+        const position = parseInt(item.dataset.position);
+        const token = item.dataset.token;
+        const tokenSpan = this.selectedTokens.find(t => parseInt(t.dataset.tokenIndex) === position);
+        if (tokenSpan) {
+          colorizer.tokenPredictor.replaceToken(tokenSpan, token);
+        }
+      });
+    });
+  }
+
+  clearMultiTokenPopup() {
+    const existingPopup = document.querySelector('.multi-token-prediction-popup');
+    if (existingPopup) {
+      existingPopup.parentNode.removeChild(existingPopup);
+    }
+  }
+
+  clearSelection() {
+    this.selectedTokens.forEach(token => {
+      token.classList.remove('selected');
+      token.style.backgroundColor = 'transparent';
+    });
+    this.selectedTokens = [];
+    this.clearMultiTokenPopup();
   }
 }
 

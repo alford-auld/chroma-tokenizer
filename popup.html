@@ -74,6 +74,41 @@
       transform: translateX(26px);
     }
     
+    .prediction-section {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px;
+      background-color: #f8f9fa;
+      border-radius: 6px;
+      border: 1px solid #e9ecef;
+    }
+    
+    .prediction-label {
+      font-size: 13px;
+      color: #333;
+      font-weight: 500;
+    }
+    
+    .prediction-btn {
+      background-color: #007bff;
+      color: white;
+      border: none;
+      padding: 6px 12px;
+      border-radius: 4px;
+      font-size: 12px;
+      cursor: pointer;
+      transition: background-color 0.2s;
+    }
+    
+    .prediction-btn:hover {
+      background-color: #0056b3;
+    }
+    
+    .prediction-btn.active {
+      background-color: #28a745;
+    }
+    
     .info-section {
       background-color: #f5f5f5;
       padding: 15px;
@@ -126,6 +161,11 @@
       </div>
     </div>
     
+    <div class="prediction-section">
+      <span class="prediction-label">Token Prediction</span>
+      <button class="prediction-btn" id="predictionBtn">Enable</button>
+    </div>
+    
     <div id="status" class="status inactive">
       Inactive
     </div>
@@ -138,6 +178,7 @@
         <li>Colorizes each individual token separately</li>
         <li>Shows token complexity through color gradients</li>
         <li>Light gray = common tokens, Black = rare tokens</li>
+        <li><strong>NEW:</strong> Click tokens to see MLM predictions!</li>
       </ul>
     </div>
   </div>
