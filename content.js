@@ -349,18 +349,27 @@ class TextTokenColorizer {
           tokenSpan.dataset.context = context;
           tokenSpan.dataset.originalToken = token;
           
-          // Add click event listeners
-          tokenSpan.addEventListener('click', (e) => {
-            e.stopPropagation();
-            this.handleTokenClick(tokenSpan);
-          });
-          
+          // Add hover event listeners instead of click
+          let hoverTimeout;
           tokenSpan.addEventListener('mouseenter', () => {
             tokenSpan.style.backgroundColor = 'rgba(74, 175, 80, 0.1)';
+            
+            // Set a small delay before showing prediction to avoid flickering
+            hoverTimeout = setTimeout(() => {
+              this.tokenPredictor.predictToken(tokenSpan);
+            }, 300); // 300ms delay
           });
           
           tokenSpan.addEventListener('mouseleave', () => {
             tokenSpan.style.backgroundColor = 'transparent';
+            
+            // Clear the timeout if mouse leaves before delay
+            if (hoverTimeout) {
+              clearTimeout(hoverTimeout);
+            }
+            
+            // Clear any popup for this token
+            this.tokenPredictor.clearPopupForToken(tokenSpan);
           });
           
           containerSpan.appendChild(tokenSpan);
@@ -396,18 +405,27 @@ class TextTokenColorizer {
       tokenSpan.dataset.context = context;
       tokenSpan.dataset.originalToken = token;
       
-      // Add click event listeners
-      tokenSpan.addEventListener('click', (e) => {
-        e.stopPropagation();
-        this.handleTokenClick(tokenSpan);
-      });
-      
+      // Add hover event listeners instead of click
+      let hoverTimeout;
       tokenSpan.addEventListener('mouseenter', () => {
         tokenSpan.style.backgroundColor = 'rgba(74, 175, 80, 0.1)';
+        
+        // Set a small delay before showing prediction to avoid flickering
+        hoverTimeout = setTimeout(() => {
+          this.tokenPredictor.predictToken(tokenSpan);
+        }, 300); // 300ms delay
       });
       
       tokenSpan.addEventListener('mouseleave', () => {
         tokenSpan.style.backgroundColor = 'transparent';
+        
+        // Clear the timeout if mouse leaves before delay
+        if (hoverTimeout) {
+          clearTimeout(hoverTimeout);
+        }
+        
+        // Clear any popup for this token
+        this.tokenPredictor.clearPopupForToken(tokenSpan);
       });
       
       return tokenSpan;
@@ -475,11 +493,24 @@ class TextTokenColorizer {
 class TokenPredictor {
   constructor() {
     this.activePopups = new Set();
+    this.loadingTokens = new Set(); // Track tokens currently being predicted
   }
 
   async predictToken(tokenSpan) {
+    // Check if this token is already being predicted
+    const tokenKey = `${tokenSpan.dataset.tokenId}-${tokenSpan.dataset.tokenIndex}`;
+    if (this.loadingTokens.has(tokenKey)) {
+      return; // Already predicting this token
+    }
+    
     // Clear any existing popups first
     this.clearAllPopups();
+    
+    // Show loading popup immediately
+    this.showLoadingPopup(tokenSpan);
+    
+    // Mark this token as being predicted
+    this.loadingTokens.add(tokenKey);
     
     const context = tokenSpan.dataset.context;
     const tokenIndex = parseInt(tokenSpan.dataset.tokenIndex);
@@ -542,15 +573,75 @@ class TokenPredictor {
       const result = await response.json();
       console.log('Prediction result:', result);
       
+      // Remove loading popup and show actual prediction
+      this.clearPopupForToken(tokenSpan);
+      
       if (result.success && result.predictions.length > 0) {
         this.showPredictionPopup(tokenSpan, result.predictions[0]);
       } else {
         console.warn('No predictions received');
+        this.showErrorPopup(tokenSpan, 'No predictions available');
       }
     } catch (error) {
       console.error('Error predicting token:', error);
+      this.clearPopupForToken(tokenSpan);
       this.showErrorPopup(tokenSpan, 'Prediction failed: ' + error.message);
+    } finally {
+      // Remove from loading set
+      this.loadingTokens.delete(tokenKey);
     }
+  }
+
+  showLoadingPopup(tokenSpan) {
+    // Remove any existing popup for this token
+    this.clearPopupForToken(tokenSpan);
+    
+    const popup = document.createElement('div');
+    popup.className = 'token-prediction-popup loading';
+    popup.dataset.tokenId = tokenSpan.dataset.tokenId;
+    
+    popup.innerHTML = `
+      <div class="popup-header">
+        <span class="popup-title">Loading Predictions...</span>
+        <button class="close-btn">×</button>
+      </div>
+      <div class="popup-content">
+        <div class="loading-spinner">
+          <div class="spinner"></div>
+          <span>Computing token predictions...</span>
+        </div>
+      </div>
+    `;
+    
+    // Better positioning logic
+    const rect = tokenSpan.getBoundingClientRect();
+    const popupWidth = 250; // Fixed width
+    const popupHeight = 100; // Estimated height for loading
+    
+    let left = rect.left;
+    let top = rect.bottom + 5;
+    
+    // Adjust horizontal position if popup would go off-screen
+    if (left + popupWidth > window.innerWidth) {
+      left = window.innerWidth - popupWidth - 10;
+    }
+    
+    // Adjust vertical position if popup would go off-screen
+    if (top + popupHeight > window.innerHeight) {
+      top = rect.top - popupHeight - 5;
+    }
+    
+    popup.style.position = 'fixed';
+    popup.style.left = left + 'px';
+    popup.style.top = top + 'px';
+    popup.style.zIndex = '10000';
+    
+    document.body.appendChild(popup);
+    
+    // Add event listeners
+    popup.querySelector('.close-btn').addEventListener('click', () => {
+      this.clearPopupForToken(tokenSpan);
+    });
   }
 
   showPredictionPopup(tokenSpan, prediction) {
@@ -640,13 +731,6 @@ class TokenPredictor {
     popup.querySelector('.close-btn').addEventListener('click', () => {
       this.clearPopupForToken(tokenSpan);
     });
-    
-    popup.querySelectorAll('.prediction-item').forEach(item => {
-      item.addEventListener('click', () => {
-        const token = item.dataset.token;
-        this.replaceToken(tokenSpan, token);
-      });
-    });
   }
 
   showErrorPopup(tokenSpan, message) {
@@ -673,23 +757,6 @@ class TokenPredictor {
     });
     
     setTimeout(() => this.removePopup(popup), 3000);
-  }
-
-  replaceToken(tokenSpan, newToken) {
-    tokenSpan.textContent = newToken;
-    tokenSpan.dataset.originalToken = newToken;
-    
-    // Update the context in the wrapper
-    const wrapper = tokenSpan.closest('.text-token-processed');
-    if (wrapper) {
-      const originalTextNode = Array.from(colorizer.originalTexts.keys()).find(node => 
-        wrapper.parentNode === node.parentNode
-      );
-      if (originalTextNode) {
-        const newContext = wrapper.textContent;
-        colorizer.originalTexts.set(originalTextNode, newContext);
-      }
-    }
   }
 
   removePopup(popup) {

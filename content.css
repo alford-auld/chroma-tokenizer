@@ -153,12 +153,7 @@ body {
   align-items: center;
   padding: 4px 8px;
   border-radius: 4px;
-  cursor: pointer;
   transition: background-color 0.2s;
-}
-
-.prediction-item:hover {
-  background-color: #f8f9fa;
 }
 
 .token {
@@ -236,4 +231,36 @@ body {
     opacity: 1;
     transform: translateY(0);
   }
+}
+
+/* Loading spinner styles */
+.loading-spinner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+}
+
+.spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid #f3f3f3;
+  border-top: 2px solid #1976d2;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* Loading popup specific styles */
+.token-prediction-popup.loading {
+  min-width: 200px;
+  max-width: 250px;
+}
+
+.token-prediction-popup.loading .popup-content {
+  padding: 8px 0;
 }
